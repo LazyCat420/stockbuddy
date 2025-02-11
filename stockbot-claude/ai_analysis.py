@@ -9,7 +9,7 @@ class AIAnalyzer:
         self.model = OLLAMA_MODEL
     
     def _generate_response(self, prompt: str) -> str:
-        """Generate response from Ollama"""
+        """Generate response from Ollama using streaming for real-time console output"""
         try:
             print("\nGenerating AI response...")
             response = requests.post(
@@ -17,12 +17,27 @@ class AIAnalyzer:
                 json={
                     "model": self.model,
                     "prompt": prompt,
-                    "stream": False
-                }
+                    "stream": True  # enable streaming so that results come in real time
+                },
+                stream=True
             )
             response.raise_for_status()
-            result = response.json().get("response", "")
-            print("Response received")
+            result = ""
+            print("Response streaming:")
+            # Process each line (chunk) as it comes in
+            for line in response.iter_lines(decode_unicode=True):
+                if line:
+                    try:
+                        # Each line is expected to be a JSON object
+                        chunk = json.loads(line)
+                        text_chunk = chunk.get("response", "")
+                    except json.JSONDecodeError:
+                        # Fallback: if not valid JSON, use the raw line
+                        text_chunk = line
+                    # Print each text chunk immediately to the console
+                    print(text_chunk, end="", flush=True)
+                    result += text_chunk
+            print("\nResponse complete")
             return result
         except Exception as e:
             print(f"Error generating response: {str(e)}")

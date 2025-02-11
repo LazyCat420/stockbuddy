@@ -1,8 +1,8 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from .env file (override any existing ones)
+load_dotenv(override=True)
 
 # Environment variables
 MONGODB_URI = os.getenv("MONGODB_URI")
