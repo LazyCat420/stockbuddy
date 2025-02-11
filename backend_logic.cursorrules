@@ -1,0 +1,74 @@
+Use python 
+
+make sure to put the logic into different py files that way it will be easier to handle later. Have a main.py file that will be the main file that will be used to run the program. Have each part General Mode, Sector Mode, Single Stock Mode as seperate files. Also make the Mongodb handling, searxng, and the ollama to be seperate files as well that way its easier to handle. 
+
+Requirements for project:
+yfinance
+ollama
+searxng
+mongodb
+langchain_community
+matplotlib
+scipy
+pymongo
+
+env variables:
+MONGODB_URI
+OLLAMA_URL
+OLLAMA_API_KEY
+OLLAMA_MODEL
+SEARXNG_URL
+
+
+Bot Logic: 
+1. Personality: Allow different personalities for the bot. 
+2. Allow the bot to choose the parameters do not hard code the parameters. 
+3. The bot will be trading on a fake paper trading account. Put $1000000 in the account. 
+4. Have a mode where the bot will choose all the parameters including personality, trading logic, trading parameters. 
+5. Bot needs to use logic systems such as chain of thought, thinking step by step, tree-of-thought, and graph-of-thought to make decisions. 
+
+
+Buy and Sell Logic: 
+1. Get the stock data from yfinance. 
+2. Use ollama to analyze the news and stock market trends and decide if the user should buy, sell or hold the stock. 
+3. If the user should buy, sell or hold the stock, save the decision to the mongodb database under the trade folder. 
+4. Make sure the data is handled in the mongodb so the frontend can do all the calculations do not do any calculations in the backend just store the data that way it's easier to handle in the frontend. 
+5. Let the ollama model decide the buy and sell logic and the parameters for the trading such as confidence level, stop loss, take profit, etc. 
+
+
+Trading bot logic: 
+Let the user pick which trade mode they want to use. 
+
+General Mode:
+1. Get general stock market news using searxng and langchain use searxng_example.py as reference. Save the news in mongodb under the news folder. 
+2. Use ollama to analyze the news and stock market trends and to identify and save tickers to a watchlist. 
+3. Use yfinance to get the stock data for the tickers on the watchlist. 
+4. Search news based on the tickers saved on the watchlist using searxng and langchain. 
+5. Use ollama to analyze the news and stock market trends and decide if the user should buy, sell or hold the stock. Get the price stock data from yfinance. 
+6. If the user should buy, sell or hold the stock, save the decision to the mongodb database under the trade folder. 
+7. At end of process make a summary of what the bot did and save it to the mongodb database under the summary folder. 
+
+Sector Mode: 
+1. Get stock market news based on the sector the user wants to trade. Use searxng and langchain to get the news. 
+2. Use ollama to analyze the news and stock market trends and to identify and save tickers to a watchlist. 
+3. Use yfinance to get the stock data for the tickers on the watchlist. 
+4. Search news based on the tickers saved on the watchlist using searxng and langchain. 
+5. Use ollama to analyze the news and stock market trends and decide if the user should buy, sell or hold the stock. Get the price stock data from yfinance. 
+6. If the user should buy, sell or hold the stock, save the decision to the mongodb database under the trade folder. 
+
+Single Stock Mode: 
+1. Get stock market news based on the stock the user wants to trade. Use searxng and langchain to get the news. 
+2. Use ollama to analyze the stock to find more queries to search for the stock using searxng and langchain. Have it ask 3 questions based on the summary of the stocks news. Keep that pattern going for 2 rounds. That way the bot will ask more in depth questions and be able to query with searxng to find the answer. 
+5. Use ollama to analyze the news and stock market trends and decide if the user should buy, sell or hold the stock. Get the price stock data from yfinance. 
+6. If the user should buy, sell or hold the stock, save the decision to the mongodb database under the trade folder. 
+
+
+
+
+
+
+
+
+
+
+

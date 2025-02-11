@@ -1,0 +1,8 @@
+yfinance
+langchain_community
+matplotlib
+scipy
+pymongo
+openai
+
+
