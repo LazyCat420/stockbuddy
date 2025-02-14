@@ -22,9 +22,14 @@ from langchain.schema import BaseRetriever, Document
 from pydantic import Field
 from datetime import datetime
 import random
+import logging
 
 # Remove circular import
 # from news_search import NewsSearcher
+
+# Configure logging to suppress selenium noise
+logging.getLogger('selenium').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 class WebScraper:
     def __init__(self):
@@ -43,6 +48,13 @@ class WebScraper:
         self.chrome_options.add_argument('--disable-dev-shm-usage')
         self.chrome_options.add_argument('--disable-gpu')
         self.chrome_options.add_argument('--window-size=1920,1080')
+        self.chrome_options.add_argument('--log-level=3')  # Only show fatal errors
+        
+        # Add WebGL error suppression
+        self.chrome_options.add_argument('--disable-software-rasterizer')
+        self.chrome_options.add_argument('--disable-webgl')
+        self.chrome_options.add_argument('--disable-webgl2')
+        self.chrome_options.add_argument('--enable-unsafe-swiftshader')  # Enable SwiftShader with lower security for trusted content
         
         # Add better SSL handling
         self.chrome_options.add_argument('--ignore-certificate-errors')
@@ -51,7 +63,7 @@ class WebScraper:
         
         # Add anti-bot detection bypass
         self.chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        self.chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        self.chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])  # Suppress console logging
         self.chrome_options.add_experimental_option('useAutomationExtension', False)
         
         # Add better user agent

@@ -109,7 +109,15 @@ class SingleStockMode:
             "key_insights": []
         }
         
-        current_summary = initial_context
+        # Convert initial context to string if it's a dict
+        if isinstance(initial_context, dict):
+            current_summary = f"""
+            Market Impact: {initial_context.get('market_impact', '')}
+            Sentiment: {initial_context.get('sentiment', 'neutral')}
+            Key Points: {', '.join(initial_context.get('key_points', []))}
+            """
+        else:
+            current_summary = str(initial_context)
         
         # Perform multiple rounds of analysis
         for round_num in range(2):
@@ -126,17 +134,22 @@ class SingleStockMode:
             print(f"Generated {len(questions)} questions")
             
             for i, q in enumerate(questions):
-                print(f"\n📝 Question {i+1}: {q['text']}")
-                print(f"🔧 Using research tool: {q['tool']}")
+                print(f"\n📝 Question {i+1}: {q.get('text', '')}")
+                print(f"🔧 Using research tool: {q.get('tool', 'unknown')}")
                 
                 # Use appropriate research tool
                 try:
-                    if q['tool'] == 'news_search':
-                        results = self.news_searcher.search_stock_news(ticker, q['text'])
-                    elif q['tool'] == 'financial_data':
+                    tool = q.get('tool', '').lower()
+                    if 'news_search' in tool:
+                        results = self.news_searcher.search_stock_news(ticker, q.get('text', ''))
+                    elif 'financial_data' in tool:
                         results = self.stock_data.get_detailed_financials(ticker)
-                    elif q['tool'] == 'market_analysis':
+                    elif 'market_analysis' in tool:
                         results = self.stock_data.get_market_analysis(ticker)
+                    else:
+                        # Default to news search if tool is unknown
+                        results = self.news_searcher.search_stock_news(ticker, q.get('text', ''))
+                        tool = 'news_search'
                     
                     print("✅ Got research results")
                     
@@ -145,15 +158,21 @@ class SingleStockMode:
                     analysis = self.ai_analyzer.analyze_content({
                         "success": True,
                         "content": str(results),
-                        "metadata": {"source": q['tool']}
+                        "metadata": {"source": tool}
                     })
                     
                     round_findings["questions"].append(q)
                     round_findings["answers"].append(analysis)
-                    round_findings["tools_used"].append(q['tool'])
+                    round_findings["tools_used"].append(tool)
                     
-                    # Update context for next questions
-                    current_summary += f"\n{analysis.get('market_impact', '')}"
+                    # Update context for next questions - ensure we're adding strings
+                    if analysis and isinstance(analysis, dict):
+                        new_context = f"""
+                        Market Impact: {analysis.get('market_impact', '')}
+                        Sentiment: {analysis.get('sentiment', {}).get('direction', 'neutral')}
+                        Key Points: {', '.join(analysis.get('key_points', []))}
+                        """
+                        current_summary += "\n" + new_context
                     
                 except Exception as e:
                     print(f"⚠️ Error processing question: {str(e)}")
@@ -175,23 +194,38 @@ class SingleStockMode:
         
         # Combine all insights for final analysis
         all_insights = []
-        for round_data in detailed_analysis["rounds"]:
-            for answer in round_data["answers"]:
+        sentiment_counts = {"bullish": 0, "bearish": 0, "neutral": 0}
+        total_confidence = 0
+        confidence_count = 0
+        
+        # Process insights from each round
+        for round_data in detailed_analysis.get("rounds", []):
+            for answer in round_data.get("answers", []):
                 if isinstance(answer, dict):
+                    # Extract sentiment
+                    if isinstance(answer.get("sentiment"), dict):
+                        sentiment = answer["sentiment"].get("direction", "neutral")
+                    else:
+                        sentiment = answer.get("sentiment", "neutral")
+                    sentiment_counts[sentiment.lower()] += 1
+                    
+                    # Extract confidence
+                    if isinstance(answer.get("confidence"), (int, float)):
+                        total_confidence += answer["confidence"]
+                        confidence_count += 1
+                    
+                    # Add to insights
                     all_insights.append({
-                        "sentiment": answer.get("sentiment", "neutral"),
+                        "sentiment": sentiment,
                         "market_impact": answer.get("market_impact", ""),
-                        "confidence": answer.get("confidence", 0)
+                        "key_points": answer.get("key_points", [])
                     })
         
         print(f"\n📊 Analyzing {len(all_insights)} insights")
         
-        # Calculate average sentiment and confidence
-        sentiments = [i["sentiment"] for i in all_insights]
-        confidences = [i["confidence"] for i in all_insights]
-        
-        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-        dominant_sentiment = max(set(sentiments), key=sentiments.count)
+        # Calculate dominant sentiment and average confidence
+        dominant_sentiment = max(sentiment_counts.items(), key=lambda x: x[1])[0]
+        avg_confidence = total_confidence / confidence_count if confidence_count > 0 else 50
         
         print(f"Dominant sentiment: {dominant_sentiment}")
         print(f"Average confidence: {avg_confidence:.2f}%")
@@ -208,32 +242,72 @@ class SingleStockMode:
             news_analysis={
                 "sentiment": dominant_sentiment,
                 "confidence": avg_confidence,
-                "key_points": detailed_analysis["key_insights"],
-                "market_impact": "\n".join(i["market_impact"] for i in all_insights)
+                "key_points": detailed_analysis.get("key_insights", []),
+                "market_impact": "\n".join(i.get("market_impact", "") for i in all_insights if i.get("market_impact"))
             },
             stock_data=stock_data,
             personality=personality
         )
         
         # Save trade if action is buy or sell
-        if decision["action"] in ["buy", "sell"]:
+        if decision.get("action") in ["buy", "sell"]:
             print("\n💾 Saving trade to database...")
-            self.db.save_trade(
-                ticker=ticker,
-                action=decision["action"],
-                price=decision["entry_price"],
-                quantity=decision["quantity"],
-                personality=personality,
-                confidence=decision["confidence"],
-                stop_loss=decision["stop_loss"],
-                take_profit=decision["take_profit"]
-            )
+            
+            # Prepare trade data
+            trade_data = {
+                "ticker": ticker,
+                "action": decision["action"],
+                "price": decision.get("entry_price", 0),
+                "quantity": decision.get("quantity", 0),
+                "personality": personality,
+                "confidence": decision.get("confidence", 0),
+                "stop_loss": decision.get("stop_loss", 0),
+                "take_profit": decision.get("take_profit", 0),
+                "timestamp": datetime.now(),
+                "analysis": {
+                    "sentiment": dominant_sentiment,
+                    "avg_confidence": avg_confidence,
+                    "key_insights": detailed_analysis.get("key_insights", []),
+                    "market_impact": decision.get("market_impact", "")
+                }
+            }
+            
+            # Save to MongoDB
+            try:
+                self.db.save_trade(**trade_data)
+                print("✅ Trade saved to MongoDB")
+            except Exception as e:
+                print(f"⚠️ Failed to save trade to MongoDB: {str(e)}")
+            
+            # Save to ChromaDB
+            try:
+                if hasattr(self.ai_analyzer, 'chroma_handler') and self.ai_analyzer.chroma_handler:
+                    self.ai_analyzer.chroma_handler.save_analysis(
+                        collection_name="trading_decisions",
+                        data={
+                            "analysis": trade_data,
+                            "metadata": {
+                                "ticker": ticker,
+                                "action": decision["action"],
+                                "timestamp": str(datetime.now()),
+                                "personality": personality
+                            }
+                        }
+                    )
+                    print("✅ Trade saved to ChromaDB")
+            except Exception as e:
+                print(f"⚠️ Failed to save trade to ChromaDB: {str(e)}")
         
         print("\n✅ Trading decision complete")
         return {
             "ticker": ticker,
             "decision": decision,
-            "personality": personality
+            "personality": personality,
+            "analysis_summary": {
+                "sentiment": dominant_sentiment,
+                "confidence": avg_confidence,
+                "insights_analyzed": len(all_insights)
+            }
         }
     
     def _generate_summary(self, ticker: str, trading_decision: Dict, detailed_analysis: Dict) -> Dict:

@@ -156,9 +156,19 @@ Think through each step carefully and explain your reasoning."""
             return None
         
         # Initial analysis combining stock and sector insights
+        initial_stock_analysis = self.ai_analyzer.analyze_news(initial_news)
+        
+        # Create initial summary as formatted string
         current_summary = f"""
-        Sector Context: {sector_analysis.get('market_impact', '')}
-        Initial Stock Analysis: {self.ai_analyzer.analyze_news(initial_news).get('market_impact', '')}
+        Sector Context:
+        - Market Impact: {sector_analysis.get('market_impact', '')}
+        - Sentiment: {sector_analysis.get('sentiment', 'neutral')}
+        - Key Points: {', '.join(sector_analysis.get('key_points', []))}
+        
+        Initial Stock Analysis:
+        - Market Impact: {initial_stock_analysis.get('market_impact', '')}
+        - Sentiment: {initial_stock_analysis.get('sentiment', 'neutral')}
+        - Key Points: {', '.join(initial_stock_analysis.get('key_points', []))}
         """
         
         print("\nStarting multi-round analysis...")
@@ -176,10 +186,10 @@ Think through each step carefully and explain your reasoning."""
             
             # Search for answers to each question
             for i, question in enumerate(questions, 1):
-                print(f"\nQuestion {i}: {question}")
+                print(f"\nQuestion {i}: {question.get('text', '')}")
                 
                 # Search news with the specific question
-                question_news = self.news_searcher.search_stock_news(ticker, question)
+                question_news = self.news_searcher.search_stock_news(ticker, question.get('text', ''))
                 self._save_news(question_news, f"{ticker}_R{round_num + 1}")
                 
                 # Analyze the news to answer the question
@@ -189,8 +199,15 @@ Think through each step carefully and explain your reasoning."""
                 round_findings["questions"].append(question)
                 round_findings["answers"].append(answer_analysis)
                 
-                # Update current summary with new insights
-                current_summary += f"\n{answer_analysis.get('market_impact', '')}"
+                # Update current summary with new insights - ensure we're adding strings
+                if answer_analysis and isinstance(answer_analysis, dict):
+                    new_context = f"""
+                    New Analysis:
+                    - Market Impact: {answer_analysis.get('market_impact', '')}
+                    - Sentiment: {answer_analysis.get('sentiment', 'neutral')}
+                    - Key Points: {', '.join(answer_analysis.get('key_points', []))}
+                    """
+                    current_summary += "\n" + new_context
             
             all_findings["rounds"].append(round_findings)
             
@@ -199,62 +216,7 @@ Think through each step carefully and explain your reasoning."""
                 if isinstance(answer, dict) and "key_points" in answer:
                     all_findings["key_insights"].extend(answer["key_points"])
         
-        # Make final trading decision
-        print("\nGenerating final trading decision...")
-        
-        # Combine all insights
-        all_insights = []
-        for round_data in all_findings["rounds"]:
-            for answer in round_data["answers"]:
-                if isinstance(answer, dict):
-                    all_insights.append({
-                        "sentiment": answer.get("sentiment", "neutral"),
-                        "market_impact": answer.get("market_impact", ""),
-                        "confidence": answer.get("confidence", 0)
-                    })
-        
-        # Calculate average sentiment and confidence
-        sentiments = [i["sentiment"] for i in all_insights]
-        confidences = [i["confidence"] for i in all_insights]
-        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-        
-        # Select trading personality
-        personality = self.ai_analyzer.select_trading_personality()
-        print(f"Selected personality: {personality}")
-        
-        # Generate final trading decision
-        decision = self.ai_analyzer.generate_trading_decision(
-            ticker=ticker,
-            news_analysis={
-                "sentiment": max(set(sentiments), key=sentiments.count),
-                "confidence": avg_confidence,
-                "key_points": all_findings["key_insights"],
-                "market_impact": "\n".join(i["market_impact"] for i in all_insights)
-            },
-            stock_data=stock_data,
-            personality=personality
-        )
-        
-        # Save trade if action is buy
-        if decision.get("action") == "buy":
-            print(f"\nSaving buy decision for {ticker}...")
-            self.db.save_trade(
-                ticker=ticker,
-                action="buy",
-                price=decision["entry_price"],
-                quantity=decision["quantity"],
-                personality=personality,
-                confidence=decision["confidence"],
-                stop_loss=decision["stop_loss"],
-                take_profit=decision["take_profit"]
-            )
-        
-        return {
-            "ticker": ticker,
-            "decision": decision,
-            "personality": personality,
-            "analysis": all_findings
-        }
+        return all_findings
     
     def _analyze_stock(self, ticker: str, sector_analysis: Dict) -> Dict:
         """Enhanced stock analysis with deep questioning"""

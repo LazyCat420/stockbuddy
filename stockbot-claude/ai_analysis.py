@@ -7,11 +7,21 @@ from datetime import datetime
 
 class AIAnalyzer:
     def __init__(self):
+        print("\n=== Initializing AI Analyzer ===")
         self.base_url = OLLAMA_URL
         self.model = OLLAMA_MODEL
         self.headers = {
             'Content-Type': 'application/json'
         }
+        
+        # Initialize ChromaDB handler
+        try:
+            from chromadb_handler import ChromaDBHandler
+            self.chroma_handler = ChromaDBHandler()
+            print("✅ ChromaDB handler initialized")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize ChromaDB handler: {str(e)}")
+            self.chroma_handler = None
     
     def _generate_response(self, prompt: str) -> str:
         """Generate response from Ollama"""
@@ -191,6 +201,28 @@ Provide your analysis in JSON format with the following structure:
                     return self._get_default_analysis()
                 time.sleep(2)  # Wait before retrying
     
+    def _save_to_chroma(self, analysis: Dict, metadata: Dict) -> bool:
+        """Helper method to save analysis to ChromaDB"""
+        if not self.chroma_handler:
+            print("⚠️ ChromaDB handler not available, skipping save")
+            return False
+            
+        try:
+            print("\n💾 Saving analysis to ChromaDB...")
+            success = self.chroma_handler.save_analysis(
+                collection_name="news_analyses",
+                data={
+                    "analysis": analysis,
+                    "metadata": metadata
+                }
+            )
+            if success:
+                print("✅ Analysis saved to ChromaDB")
+            return success
+        except Exception as e:
+            print(f"⚠️ Failed to save to ChromaDB: {str(e)}")
+            return False
+    
     def _combine_analyses(self, analyses: List[Dict]) -> Dict:
         """Combine multiple chunk analyses into a single analysis"""
         if not analyses:
@@ -265,23 +297,15 @@ Provide a thorough conclusion that weighs all factors.""")
         }
         
         # Save to ChromaDB
-        try:
-            print("\n💾 Saving analysis to ChromaDB...")
-            self.chroma_handler.save_analysis(
-                collection_name="news_analyses",
-                data={
-                    "analysis": combined_analysis,
-                    "metadata": {
-                        "timestamp": str(datetime.now()),
-                        "num_articles": len(all_summaries),
-                        "sentiment": overall_sentiment,
-                        "confidence": avg_confidence
-                    }
-                }
-            )
-            print("✅ Analysis saved to ChromaDB")
-        except Exception as e:
-            print(f"⚠️ Failed to save to ChromaDB: {str(e)}")
+        self._save_to_chroma(
+            analysis=combined_analysis,
+            metadata={
+                "timestamp": str(datetime.now()),
+                "num_articles": len(all_summaries),
+                "sentiment": overall_sentiment,
+                "confidence": avg_confidence
+            }
+        )
         
         return combined_analysis
     
@@ -483,8 +507,8 @@ Provide your decision in JSON format with the following structure:
         {{
             "questions": [
                 {{
-                    "question": "What is {ticker}'s...",
-                    "research_tool": "news_search/financial_data/market_analysis",
+                    "text": "What is {ticker}'s...",
+                    "tool": "news_search/financial_data/market_analysis",
                     "rationale": "This will help understand..."
                 }}
             ]
@@ -492,25 +516,50 @@ Provide your decision in JSON format with the following structure:
         
         try:
             response = json.loads(self._generate_response(prompt))
-            return response["questions"]
-        except:
-            return [
-                {
-                    "question": f"What are {ticker}'s latest quarterly earnings results?",
-                    "research_tool": "financial_data",
-                    "rationale": "Understanding recent financial performance"
-                },
-                {
-                    "question": f"What recent news has affected {ticker}'s stock price?",
-                    "research_tool": "news_search",
-                    "rationale": "Identifying price catalysts"
-                },
-                {
-                    "question": f"How does {ticker}'s valuation compare to peers?",
-                    "research_tool": "market_analysis",
-                    "rationale": "Assessing relative value"
-                }
-            ]
+            questions = response.get("questions", [])
+            
+            # Ensure each question has required fields
+            validated_questions = []
+            for q in questions:
+                if isinstance(q, dict):
+                    # Convert old format if needed
+                    if "question" in q and "text" not in q:
+                        q["text"] = q.pop("question")
+                    if "research_tool" in q and "tool" not in q:
+                        q["tool"] = q.pop("research_tool")
+                    
+                    # Validate required fields
+                    if "text" in q and "tool" in q and "rationale" in q:
+                        validated_questions.append(q)
+            
+            if not validated_questions:
+                return self._get_default_questions(ticker)
+                
+            return validated_questions
+            
+        except Exception as e:
+            print(f"❌ Error generating questions: {str(e)}")
+            return self._get_default_questions(ticker)
+    
+    def _get_default_questions(self, ticker: str) -> List[Dict]:
+        """Return default questions when generation fails"""
+        return [
+            {
+                "text": f"What are {ticker}'s latest quarterly earnings results?",
+                "tool": "financial_data",
+                "rationale": "Understanding recent financial performance"
+            },
+            {
+                "text": f"What recent news has affected {ticker}'s stock price?",
+                "tool": "news_search",
+                "rationale": "Identifying price catalysts"
+            },
+            {
+                "text": f"How does {ticker}'s valuation compare to peers?",
+                "tool": "market_analysis",
+                "rationale": "Assessing relative value"
+            }
+        ]
     
     def select_trading_personality(self) -> str:
         """Select trading personality based on market conditions using chain-of-thought"""
