@@ -2,7 +2,7 @@
 from langchain_community.document_loaders import WebBaseLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_ollama import OllamaEmbeddings  # Updated import
+from langchain_ollama import OllamaEmbeddings
 from langchain.chains import RetrievalQA
 from langchain_community.llms import Ollama
 from config import OLLAMA_MODEL, OLLAMA_URL, OLLAMA_EMBEDDING_URL, OLLAMA_EMBEDDING_MODEL
@@ -20,6 +20,8 @@ import os
 from chromadb_handler import ChromaDBHandler
 from langchain.schema import BaseRetriever, Document
 from pydantic import Field
+from datetime import datetime
+import random
 
 # Remove circular import
 # from news_search import NewsSearcher
@@ -33,97 +35,74 @@ class WebScraper:
         self.ollama_model = OLLAMA_MODEL
         self.embedding_model = OLLAMA_EMBEDDING_MODEL
         self.chroma_handler = ChromaDBHandler()
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        # Initialize Chrome options
+        
+        # Initialize Chrome options with better defaults
         self.chrome_options = Options()
         self.chrome_options.add_argument('--headless')
         self.chrome_options.add_argument('--no-sandbox')
         self.chrome_options.add_argument('--disable-dev-shm-usage')
+        self.chrome_options.add_argument('--disable-gpu')
+        self.chrome_options.add_argument('--window-size=1920,1080')
+        
+        # Add better SSL handling
+        self.chrome_options.add_argument('--ignore-certificate-errors')
+        self.chrome_options.add_argument('--ignore-ssl-errors')
+        self.chrome_options.add_argument('--allow-insecure-localhost')
+        
+        # Add anti-bot detection bypass
+        self.chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        self.chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        self.chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # Add better user agent
+        self.chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
         # Initialize ChromaDB with persistent storage
         self.chroma_client = chromadb.PersistentClient(path="./chroma_db")
         print("✅ ChromaDB initialized with persistent storage")
         
-        print("✅ WebScraper initialized")
+        # Initialize webdriver with better error handling
+        try:
+            self.driver = webdriver.Chrome(options=self.chrome_options)
+            # Execute CDP commands to prevent detection
+            self.driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+                "userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
+            })
+            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': '''
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    })
+                '''
+            })
+            print("✅ WebScraper initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize WebScraper: {str(e)}")
+            raise
     
-    def _get_with_retry(self, url: str, max_retries: int = 3) -> Optional[str]:
-        """Get URL content with Selenium WebDriver"""
-        print("\n=== SCRAPING ATTEMPT STARTED ===")
-        print(f"🌐 URL: {url}")
-        
-        for attempt in range(max_retries):
-            try:
-                print(f"\n📝 Attempt {attempt + 1}/{max_retries}")
-                
-                # Initialize WebDriver
-                driver = webdriver.Chrome(options=self.chrome_options)
-                driver.get(url)
-                
-                # Wait for page load with longer timeout
-                WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                
-                # Try to find article content first
-                content_selectors = [
-                    "article",
-                    ".article-content",
-                    ".story-content",
-                    ".content-article",
-                    "main",
-                    ".main-content"
-                ]
-                
-                text_content = ""
-                for selector in content_selectors:
-                    try:
-                        element = driver.find_element(By.CSS_SELECTOR, selector)
-                        text_content = element.text
-                        if text_content and len(text_content) > 100:
-                            break
-                    except:
-                        continue
-                
-                # Fallback to body if no article content found
-                if not text_content:
-                    text_content = driver.find_element(By.TAG_NAME, "body").text
-                
-                # Debug content
-                print("\n=== CONTENT PREVIEW ===")
-                print(f"📊 Content length: {len(text_content)} characters")
-                print("\nFirst 500 characters:")
-                print("---START---")
-                print(text_content[:500])
-                print("---END---")
-                
-                driver.quit()
-                
-                if len(text_content) < 100:
-                    print("⚠️ Warning: Content too short!")
-                    continue
-                    
-                return text_content
-                
-            except Exception as e:
-                print(f"\n❌ Scraping attempt {attempt + 1} failed:")
-                print(f"Error type: {type(e).__name__}")
-                print(f"Error message: {str(e)}")
-                if 'driver' in locals():
-                    driver.quit()
-                
-                if attempt < max_retries - 1:
-                    print(f"Retrying in 5 seconds...")
-                    time.sleep(5)
-                continue
-        
-        print(f"\n❌ All {max_retries} scraping attempts failed")
-        return None
+    def _determine_source(self, url: str) -> str:
+        """Determine the source type from URL"""
+        url_lower = url.lower()
+        if 'yahoo.com' in url_lower:
+            return 'Yahoo Finance'
+        elif 'marketwatch.com' in url_lower:
+            return 'MarketWatch'
+        elif 'reuters.com' in url_lower:
+            return 'Reuters'
+        elif 'bloomberg.com' in url_lower:
+            return 'Bloomberg'
+        elif 'cnbc.com' in url_lower:
+            return 'CNBC'
+        elif 'fool.com' in url_lower:
+            return 'Motley Fool'
+        elif 'seekingalpha.com' in url_lower:
+            return 'Seeking Alpha'
+        else:
+            return 'Financial News'
 
     def scrape_and_analyze(self, url: str) -> Dict:
-        """Scrape and analyze webpage content"""
-        print("\n=== Starting Scrape and Analysis ===")
+        """Scrape webpage content and return structured data"""
+        print("\n=== Starting Web Scraping ===")
         print(f"🎯 Target URL: {url}")
         
         try:
@@ -132,51 +111,160 @@ class WebScraper:
                 return {"success": False, "error": "Empty URL provided"}
             if not url.startswith(('http://', 'https://')):
                 return {"success": False, "error": "Invalid URL format"}
+
+            print("\n=== SCRAPING ATTEMPT STARTED ===")
+            print(f"🌐 URL: {url}")
             
-            # Get content
-            content = self._get_with_retry(url)
-            if not content:
-                return {
-                    "success": False,
-                    "error": "Failed to fetch content",
-                    "url": url
-                }
-            
-            # Create QA chain with retry logic
             max_retries = 3
+            content = ""
+            
             for attempt in range(max_retries):
                 try:
-                    print(f"\n🔄 Analysis attempt {attempt + 1}/{max_retries}")
-                    qa_chain = self._create_qa_chain(content)
+                    print(f"\n📝 Attempt {attempt + 1}/{max_retries}")
                     
-                    # Run analysis steps
-                    summary = qa_chain.invoke("Summarize the main points of this article in 3-4 sentences.")
-                    print(f"✅ Summary generated: {summary['result']}")
+                    # Clear cookies and cache before each attempt
+                    self.driver.delete_all_cookies()
                     
-                    sentiment = qa_chain.invoke("What is the sentiment of this article regarding the stock or market? Respond with: bullish, bearish, or neutral and explain why.")
-                    print(f"✅ Sentiment analyzed: {sentiment['result']}")
+                    # Add random delay to avoid detection
+                    time.sleep(2 + random.random() * 3)
                     
-                    key_points = qa_chain.invoke("What are the 3 most important facts or insights from this article?")
-                    print(f"✅ Key points extracted: {key_points['result']}")
+                    # Load the page with wait
+                    self.driver.get(url)
                     
-                    return {
-                        "success": True,
-                        "url": url,
-                        "content": content[:1000] + "...",
-                        "summary": summary["result"],
-                        "sentiment": sentiment["result"],
-                        "key_points": key_points["result"]
+                    # Wait for body with longer timeout
+                    WebDriverWait(self.driver, 20).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                    
+                    # Wait for dynamic content with better error handling
+                    try:
+                        WebDriverWait(self.driver, 10).until(
+                            lambda driver: driver.execute_script("return document.readyState") == "complete"
+                        )
+                    except:
+                        print("⚠️ Page load state check timed out, continuing anyway")
+                    
+                    # Scroll to load dynamic content
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)
+                    self.driver.execute_script("window.scrollTo(0, 0);")
+                    
+                    # Extract text content from different elements
+                    selectors = {
+                        'title': 'head title',
+                        'description': 'meta[name="description"]',
+                        'article': 'article',
+                        'main': 'main',
+                        'paragraphs': 'p',
+                        'headers': ['h1', 'h2', 'h3'],
+                        # Add Yahoo Finance specific selectors
+                        'yahoo_price': '[data-test="qsp-price"]',
+                        'yahoo_summary': '#quote-summary',
+                        'yahoo_stats': '#quote-summary [data-test="qsp-statistics"]'
                     }
                     
+                    content_parts = []
+                    
+                    # Get title
+                    try:
+                        title = self.driver.find_element(By.CSS_SELECTOR, selectors['title']).text
+                        content_parts.append(f"Title: {title}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to get title: {str(e)}")
+                    
+                    # Get meta description
+                    try:
+                        description = self.driver.find_element(By.CSS_SELECTOR, selectors['description']).get_attribute('content')
+                        content_parts.append(f"Description: {description}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to get description: {str(e)}")
+                    
+                    # Try Yahoo Finance specific elements first
+                    if 'yahoo.com' in url:
+                        try:
+                            price = self.driver.find_element(By.CSS_SELECTOR, selectors['yahoo_price']).text
+                            content_parts.append(f"Current Price: {price}")
+                        except:
+                            pass
+                            
+                        try:
+                            summary = self.driver.find_element(By.CSS_SELECTOR, selectors['yahoo_summary']).text
+                            content_parts.append(f"Summary: {summary}")
+                        except:
+                            pass
+                            
+                        try:
+                            stats = self.driver.find_element(By.CSS_SELECTOR, selectors['yahoo_stats']).text
+                            content_parts.append(f"Statistics: {stats}")
+                        except:
+                            pass
+                    
+                    # Get article content
+                    try:
+                        article = self.driver.find_element(By.TAG_NAME, 'article').text
+                        content_parts.append(f"Article Content: {article}")
+                    except:
+                        # If no article tag, try main content
+                        try:
+                            main = self.driver.find_element(By.TAG_NAME, 'main').text
+                            content_parts.append(f"Main Content: {main}")
+                        except:
+                            # If no main tag, get paragraphs
+                            paragraphs = self.driver.find_elements(By.TAG_NAME, 'p')
+                            for p in paragraphs:
+                                try:
+                                    content_parts.append(p.text)
+                                except:
+                                    continue
+                    
+                    # Get headers
+                    for header in selectors['headers']:
+                        try:
+                            headers = self.driver.find_elements(By.TAG_NAME, header)
+                            for h in headers:
+                                try:
+                                    content_parts.append(h.text)
+                                except:
+                                    continue
+                        except:
+                            continue
+                    
+                    content = '\n'.join(filter(None, content_parts))
+                    
+                    if content:
+                        print("\n=== CONTENT PREVIEW ===")
+                        print(f"📊 Content length: {len(content)} characters")
+                        print("\nFirst 500 characters:")
+                        print("---START---")
+                        print(content[:500])
+                        print("---END---")
+                        break
+                    else:
+                        print("⚠️ No content extracted, retrying...")
+                        
                 except Exception as e:
+                    print(f"\n⚠️ Attempt {attempt + 1} failed: {str(e)}")
                     if attempt == max_retries - 1:
                         raise
-                    print(f"⚠️ Attempt {attempt + 1} failed, retrying in 5 seconds...")
-                    print(f"Error: {str(e)}")
                     time.sleep(5)
-                
+            
+            # Structure the scraped data
+            scraped_data = {
+                "success": True,
+                "url": url,
+                "content": content,
+                "metadata": {
+                    "source": self._determine_source(url),
+                    "timestamp": str(datetime.now()),
+                    "content_length": len(content)
+                }
+            }
+            
+            print(f"\n✅ Successfully scraped {scraped_data['metadata']['source']}")
+            return scraped_data
+            
         except Exception as e:
-            print("\n❌ Analysis failed:")
+            print("\n❌ Scraping failed:")
             print(f"Error type: {type(e).__name__}")
             print(f"Error message: {str(e)}")
             return {
@@ -184,76 +272,19 @@ class WebScraper:
                 "error": str(e),
                 "url": url
             }
+        finally:
+            try:
+                # Clear cookies and cache after scraping
+                self.driver.delete_all_cookies()
+            except:
+                pass
 
-    def _create_qa_chain(self, content: str) -> RetrievalQA:
-        """Create a QA chain from content"""
+    def __del__(self):
+        """Clean up Selenium driver"""
         try:
-            print("\n🔄 Creating QA Chain...")
-            
-            # Split content into chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=500,
-                chunk_overlap=50
-            )
-            chunks = text_splitter.split_text(content)
-            print(f"📚 Split content into {len(chunks)} chunks")
-            
-            # Process chunks with ChromaDB
-            chroma_result = self.chroma_handler.process_chunks(chunks)
-            if not chroma_result["success"]:
-                raise ValueError(f"Failed to process chunks: {chroma_result['error']}")
-            
-            # Create proper BaseRetriever implementation with Pydantic field
-            class ChromaRetriever(BaseRetriever):
-                chroma_handler: Any = Field(description="ChromaDB handler instance")
-                
-                def __init__(self, chroma_handler: Any):
-                    super().__init__(chroma_handler=chroma_handler)
-                
-                def get_relevant_documents(self, query: str) -> List[Document]:
-                    """Get relevant documents for a query"""
-                    try:
-                        texts = self.chroma_handler.query_similar(query)
-                        # Convert to Document objects
-                        return [Document(page_content=text) for text in texts]
-                    except Exception as e:
-                        print(f"Error in retrieval: {str(e)}")
-                        return []
-                
-                async def aget_relevant_documents(self, query: str) -> List[Document]:
-                    """Async version of get_relevant_documents"""
-                    return self.get_relevant_documents(query)
-            
-            # Create LLM and QA chain
-            print("🤖 Initializing LLM...")
-            from langchain_ollama import OllamaLLM  # Updated import
-            
-            llm = OllamaLLM(
-                model=self.ollama_model,
-                base_url=self.base_url
-            )
-            
-            retriever = ChromaRetriever(chroma_handler=self.chroma_handler)
-            
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=llm,
-                chain_type="stuff",
-                retriever=retriever,
-                return_source_documents=True,
-                verbose=True
-            )
-            
-            print("✅ QA Chain created successfully")
-            return qa_chain
-            
-        except Exception as e:
-            print("\n❌ Error creating QA chain:")
-            print(f"Error type: {type(e).__name__}")
-            print(f"Error message: {str(e)}")
-            print(f"Full traceback:")
-            import traceback
-            print(traceback.format_exc())
-            raise
+            self.driver.quit()
+        except:
+            pass
 
 if __name__ == '__main__':
     # Replace with the URL you want to scrape
@@ -265,4 +296,5 @@ if __name__ == '__main__':
     result = scraper_chain.scrape_and_analyze(target_url)
 
     print(f"Query: {target_url}")
+    print(f"Analysis Result: {result}")
     print(f"Analysis Result: {result}")

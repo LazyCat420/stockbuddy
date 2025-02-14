@@ -2,45 +2,54 @@ import requests
 import json
 from typing import Dict, List, Tuple, Any
 from config import OLLAMA_URL, OLLAMA_MODEL
+import time
+from datetime import datetime
 
 class AIAnalyzer:
     def __init__(self):
         self.base_url = OLLAMA_URL
         self.model = OLLAMA_MODEL
+        self.headers = {
+            'Content-Type': 'application/json'
+        }
     
     def _generate_response(self, prompt: str) -> str:
-        """Generate response from Ollama using streaming for real-time console output"""
+        """Generate response from Ollama"""
         try:
-            print("\nGenerating AI response...")
+            print("\n🤖 Generating AI response...")
+            print("📤 Sending prompt to Ollama...")
+            
             response = requests.post(
                 f"{self.base_url}/api/generate",
+                headers=self.headers,
                 json={
                     "model": self.model,
                     "prompt": prompt,
-                    "stream": True  # enable streaming so that results come in real time
+                    "stream": False
                 },
-                stream=True
+                timeout=60  # Add timeout
             )
+            
+            print(f"📥 Response status code: {response.status_code}")
+            
             response.raise_for_status()
-            result = ""
-            print("Response streaming:")
-            # Process each line (chunk) as it comes in
-            for line in response.iter_lines(decode_unicode=True):
-                if line:
-                    try:
-                        # Each line is expected to be a JSON object
-                        chunk = json.loads(line)
-                        text_chunk = chunk.get("response", "")
-                    except json.JSONDecodeError:
-                        # Fallback: if not valid JSON, use the raw line
-                        text_chunk = line
-                    # Print each text chunk immediately to the console
-                    print(text_chunk, end="", flush=True)
-                    result += text_chunk
-            print("\nResponse complete")
+            result = response.json().get("response", "")
+            
+            if not result:
+                print("⚠️ Empty response received")
+                return ""
+                
+            print(f"📥 Response: {result}")
             return result
+            
+        except requests.exceptions.Timeout:
+            print("❌ Request timed out")
+            return ""
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Network error: {str(e)}")
+            return ""
         except Exception as e:
-            print(f"Error generating response: {str(e)}")
+            print(f"❌ Error generating response: {str(e)}")
             return ""
     
     def _print_analysis_step(self, step_num: int, step_name: str, data: Dict) -> None:
@@ -57,11 +66,40 @@ class AIAnalyzer:
     def analyze_news(self, news_data: List[Dict]) -> Dict:
         """Analyze news data using chain-of-thought reasoning"""
         print("\n🔍 Starting Chain-of-Thought News Analysis...")
+        print(f"📰 Analyzing {len(news_data)} news articles")
         
-        prompt = f"""Analyze the following news articles using step-by-step reasoning:
+        # Add debugging for news data
+        for i, article in enumerate(news_data):
+            print(f"\nArticle {i+1}:")
+            print(f"Summary: {article.get('summary', 'No summary')[:100]}...")
+            print(f"Sentiment: {article.get('sentiment', 'No sentiment')}")
+            print(f"Key points: {len(article.get('key_points', []))} points")
+        
+        # Break down analysis into smaller chunks if too many articles
+        chunk_size = 3
+        if len(news_data) > chunk_size:
+            print(f"\n📦 Breaking analysis into chunks of {chunk_size} articles...")
+            chunks = [news_data[i:i + chunk_size] for i in range(0, len(news_data), chunk_size)]
+            
+            all_analyses = []
+            for i, chunk in enumerate(chunks):
+                print(f"\n🔄 Analyzing chunk {i+1}/{len(chunks)}...")
+                chunk_analysis = self._analyze_news_chunk(chunk)
+                if chunk_analysis:
+                    all_analyses.append(chunk_analysis)
+            
+            # Combine chunk analyses
+            return self._combine_analyses(all_analyses)
+        else:
+            # Analyze single chunk
+            return self._analyze_news_chunk(news_data)
+    
+    def _analyze_news_chunk(self, news_chunk: List[Dict]) -> Dict:
+        """Analyze a smaller chunk of news articles"""
+        prompt = f"""Analyze these news articles using step-by-step reasoning:
 
 News articles:
-{json.dumps(news_data, indent=2)}
+{json.dumps(news_chunk, indent=2)}
 
 Follow these steps:
 1. First, summarize the key information from each article
@@ -87,37 +125,181 @@ Provide your analysis in JSON format with the following structure:
     }}
 }}"""
         
-        response = self._generate_response(prompt)
-        try:
-            analysis = json.loads(response)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self._generate_response(prompt)
+                if not response:
+                    print(f"⚠️ Empty response on attempt {attempt + 1}")
+                    continue
+                    
+                analysis = json.loads(response)
+                
+                # Validate analysis structure
+                required_fields = ['summaries', 'themes', 'sentiment', 'confidence', 'key_points', 'market_impact', 'reasoning']
+                missing_fields = [field for field in required_fields if field not in analysis]
+                
+                if missing_fields:
+                    print(f"⚠️ Missing fields in analysis: {missing_fields}")
+                    # Add default values for missing fields
+                    for field in missing_fields:
+                        if field == 'sentiment':
+                            analysis[field] = 'neutral'
+                        elif field == 'confidence':
+                            analysis[field] = 0
+                        elif field in ['summaries', 'themes', 'key_points']:
+                            analysis[field] = []
+                        elif field == 'market_impact':
+                            analysis[field] = "No market impact analysis available"
+                        elif field == 'reasoning':
+                            analysis[field] = {
+                                "bullish_factors": [],
+                                "bearish_factors": [],
+                                "conclusion": "No detailed conclusion available"
+                            }
+                
+                # Print detailed analysis steps
+                print("\n📰 News Analysis Process:")
+                self._print_analysis_step(1, "Article Summaries", {"summaries": analysis.get("summaries", [])})
+                self._print_analysis_step(2, "Common Themes", {"themes": analysis.get("themes", [])})
+                self._print_analysis_step(3, "Market Impact Analysis", {
+                    "sentiment": analysis.get("sentiment", "neutral"),
+                    "confidence": f"{analysis.get('confidence', 0)}%",
+                    "market_impact": analysis.get("market_impact", "")
+                })
+                self._print_analysis_step(4, "Bullish vs Bearish Analysis", {
+                    "bullish_factors": analysis.get("reasoning", {}).get("bullish_factors", []),
+                    "bearish_factors": analysis.get("reasoning", {}).get("bearish_factors", [])
+                })
+                self._print_analysis_step(5, "Final Conclusion", {
+                    "conclusion": analysis.get("reasoning", {}).get("conclusion", ""),
+                    "key_points": analysis.get("key_points", [])
+                })
+                
+                return analysis
+                
+            except json.JSONDecodeError as e:
+                print(f"❌ Failed to parse AI response on attempt {attempt + 1}: {str(e)}")
+                print("Raw response:", response[:500])
+                if attempt == max_retries - 1:
+                    return self._get_default_analysis()
+                time.sleep(2)  # Wait before retrying
+                
+            except Exception as e:
+                print(f"❌ Error in analysis on attempt {attempt + 1}: {str(e)}")
+                if attempt == max_retries - 1:
+                    return self._get_default_analysis()
+                time.sleep(2)  # Wait before retrying
+    
+    def _combine_analyses(self, analyses: List[Dict]) -> Dict:
+        """Combine multiple chunk analyses into a single analysis"""
+        if not analyses:
+            return self._get_default_analysis()
             
-            # Print detailed analysis steps
-            print("\n📰 News Analysis Process:")
-            self._print_analysis_step(1, "Article Summaries", {"summaries": analysis.get("summaries", [])})
-            self._print_analysis_step(2, "Common Themes", {"themes": analysis.get("themes", [])})
-            self._print_analysis_step(3, "Market Impact Analysis", {
-                "sentiment": analysis.get("sentiment", "neutral"),
-                "confidence": f"{analysis.get('confidence', 0)}%",
-                "market_impact": analysis.get("market_impact", "")
-            })
-            self._print_analysis_step(4, "Bullish vs Bearish Analysis", {
-                "bullish_factors": analysis.get("reasoning", {}).get("bullish_factors", []),
-                "bearish_factors": analysis.get("reasoning", {}).get("bearish_factors", [])
-            })
-            self._print_analysis_step(5, "Final Conclusion", {
-                "conclusion": analysis.get("reasoning", {}).get("conclusion", ""),
-                "key_points": analysis.get("key_points", [])
-            })
+        print("\n🔄 Combining chunk analyses...")
+        
+        # Combine all summaries and themes
+        all_summaries = []
+        all_themes = []
+        all_key_points = []
+        all_bullish = []
+        all_bearish = []
+        
+        # Track sentiment counts and total confidence
+        sentiment_counts = {"bullish": 0, "bearish": 0, "neutral": 0}
+        total_confidence = 0
+        
+        for analysis in analyses:
+            all_summaries.extend(analysis.get("summaries", []))
+            all_themes.extend(analysis.get("themes", []))
+            all_key_points.extend(analysis.get("key_points", []))
+            all_bullish.extend(analysis.get("reasoning", {}).get("bullish_factors", []))
+            all_bearish.extend(analysis.get("reasoning", {}).get("bearish_factors", []))
             
-            return analysis
-        except:
-            return {
-                "sentiment": "neutral",
-                "confidence": 0,
-                "key_points": [],
-                "market_impact": "Error analyzing news",
-                "reasoning": "Failed to parse AI response"
+            sentiment = analysis.get("sentiment", "neutral")
+            sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
+            total_confidence += analysis.get("confidence", 0)
+        
+        # Calculate overall sentiment and confidence
+        overall_sentiment = max(sentiment_counts.items(), key=lambda x: x[1])[0]
+        avg_confidence = total_confidence / len(analyses)
+        
+        # Deduplicate lists while preserving order
+        all_summaries = list(dict.fromkeys(all_summaries))
+        all_themes = list(dict.fromkeys(all_themes))
+        all_key_points = list(dict.fromkeys(all_key_points))
+        all_bullish = list(dict.fromkeys(all_bullish))
+        all_bearish = list(dict.fromkeys(all_bearish))
+        
+        # Generate combined market impact and conclusion
+        combined_impact = self._generate_response(f"""Synthesize these analyses into a cohesive market impact statement:
+
+Themes: {json.dumps(all_themes)}
+Key Points: {json.dumps(all_key_points)}
+Overall Sentiment: {overall_sentiment}
+Confidence: {avg_confidence}%
+
+Provide a concise market impact analysis.""")
+        
+        combined_conclusion = self._generate_response(f"""Create a detailed conclusion based on these factors:
+
+Bullish Factors: {json.dumps(all_bullish)}
+Bearish Factors: {json.dumps(all_bearish)}
+Overall Sentiment: {overall_sentiment}
+Confidence: {avg_confidence}%
+
+Provide a thorough conclusion that weighs all factors.""")
+        
+        combined_analysis = {
+            "summaries": all_summaries,
+            "themes": all_themes,
+            "sentiment": overall_sentiment,
+            "confidence": avg_confidence,
+            "key_points": all_key_points,
+            "market_impact": combined_impact,
+            "reasoning": {
+                "bullish_factors": all_bullish,
+                "bearish_factors": all_bearish,
+                "conclusion": combined_conclusion
             }
+        }
+        
+        # Save to ChromaDB
+        try:
+            print("\n💾 Saving analysis to ChromaDB...")
+            self.chroma_handler.save_analysis(
+                collection_name="news_analyses",
+                data={
+                    "analysis": combined_analysis,
+                    "metadata": {
+                        "timestamp": str(datetime.now()),
+                        "num_articles": len(all_summaries),
+                        "sentiment": overall_sentiment,
+                        "confidence": avg_confidence
+                    }
+                }
+            )
+            print("✅ Analysis saved to ChromaDB")
+        except Exception as e:
+            print(f"⚠️ Failed to save to ChromaDB: {str(e)}")
+        
+        return combined_analysis
+    
+    def _get_default_analysis(self) -> Dict:
+        """Return default analysis structure when errors occur"""
+        return {
+            "sentiment": "neutral",
+            "confidence": 0,
+            "summaries": [],
+            "themes": [],
+            "key_points": [],
+            "market_impact": "Error analyzing news",
+            "reasoning": {
+                "bullish_factors": [],
+                "bearish_factors": [],
+                "conclusion": "Failed to analyze news data"
+            }
+        }
     
     def generate_trading_decision(self, 
                                 ticker: str,
@@ -239,81 +421,94 @@ Provide your decision in JSON format with the following structure:
                 "risk_assessment": "Error assessing risk"
             }
     
-    def generate_follow_up_questions(self, ticker: str, news_summary: str) -> List[str]:
-        """Generate follow-up questions using tree-of-thought reasoning"""
-        print(f"\n🌳 Starting Tree-of-Thought Question Generation for {ticker}...")
-        
-        prompt = f"""Based on the following summary about {ticker}:
-
-{news_summary}
-
-Use tree-of-thought reasoning to generate insightful follow-up questions:
-
-1. Start with broad areas of investigation:
-   - Company fundamentals
-   - Market conditions
-   - Industry trends
-   - Risk factors
-   - Growth opportunities
-
-2. For each area:
-   - Consider what information is missing
-   - Think about potential implications
-   - Identify critical uncertainties
-
-3. Prioritize questions based on:
-   - Potential impact on trading decisions
-   - Information availability
-   - Time sensitivity
-
-Generate 3 specific follow-up questions that would help in making a better trading decision.
-Explain your reasoning for each question.
-
-Format the response as a JSON array of objects:
-[
-    {{
-        "question": "the question",
-        "category": "area of investigation",
-        "reasoning": "explanation of why this question is important",
-        "expected_impact": "how the answer could affect trading decisions"
-    }},
-    ...
-]"""
-        
-        response = self._generate_response(prompt)
+    def analyze_content(self, scraped_data: Dict) -> Dict:
+        """Analyze scraped content"""
+        if not scraped_data.get("success"):
+            return scraped_data
+            
         try:
-            questions = json.loads(response)
+            content = scraped_data["content"]
+            source = scraped_data["metadata"]["source"]
             
-            # Print question generation process
-            print("\n❓ Question Generation Process:")
-            for i, q in enumerate(questions, 1):
-                self._print_analysis_step(i, f"Question {i}", {
-                    "question": q.get("question", ""),
-                    "category": q.get("category", ""),
-                    "reasoning": q.get("reasoning", ""),
-                    "expected_impact": q.get("expected_impact", "")
-                })
+            prompt = f"""Analyze this {source} content about {{ticker}} and provide:
+            1. A concise summary focused on market impact
+            2. The sentiment (bullish/bearish/neutral) with explanation
+            3. Three key insights that could affect trading decisions
             
-            return questions
+            Content: {content[:3000]}
+            
+            Respond in JSON format:
+            {{
+                "summary": "...",
+                "sentiment": {{
+                    "direction": "bullish/bearish/neutral",
+                    "explanation": "..."
+                }},
+                "key_points": [
+                    "point 1",
+                    "point 2",
+                    "point 3"
+                ],
+                "market_impact": "..."
+            }}"""
+            
+            analysis = json.loads(self._generate_response(prompt))
+            return {
+                "success": True,
+                "summary": analysis["summary"],
+                "sentiment": analysis["sentiment"],
+                "key_points": analysis["key_points"],
+                "market_impact": analysis.get("market_impact", "")
+            }
+            
+        except Exception as e:
+            print(f"❌ Analysis failed: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def generate_follow_up_questions(self, ticker: str, current_context: str) -> List[Dict]:
+        """Generate targeted follow-up questions for a specific ticker"""
+        prompt = f"""Based on this context about {ticker}, generate 3 specific follow-up questions.
+        
+        Context: {current_context}
+        
+        Requirements:
+        1. Each question must be about {ticker} specifically
+        2. Focus on recent developments, financials, or competitive position
+        3. Questions should help with trading decisions
+        
+        Respond in JSON format:
+        {{
+            "questions": [
+                {{
+                    "question": "What is {ticker}'s...",
+                    "research_tool": "news_search/financial_data/market_analysis",
+                    "rationale": "This will help understand..."
+                }}
+            ]
+        }}"""
+        
+        try:
+            response = json.loads(self._generate_response(prompt))
+            return response["questions"]
         except:
             return [
                 {
-                    "question": f"What are the main competitors of {ticker}?",
-                    "category": "Industry Analysis",
-                    "reasoning": "Understanding competitive position",
-                    "expected_impact": "Assess market share stability"
+                    "question": f"What are {ticker}'s latest quarterly earnings results?",
+                    "research_tool": "financial_data",
+                    "rationale": "Understanding recent financial performance"
                 },
                 {
-                    "question": f"What are the current market risks for {ticker}?",
-                    "category": "Risk Assessment",
-                    "reasoning": "Identifying potential threats",
-                    "expected_impact": "Risk management strategy"
+                    "question": f"What recent news has affected {ticker}'s stock price?",
+                    "research_tool": "news_search",
+                    "rationale": "Identifying price catalysts"
                 },
                 {
-                    "question": f"What are the growth prospects for {ticker}?",
-                    "category": "Growth Analysis",
-                    "reasoning": "Evaluating future potential",
-                    "expected_impact": "Long-term investment viability"
+                    "question": f"How does {ticker}'s valuation compare to peers?",
+                    "research_tool": "market_analysis",
+                    "rationale": "Assessing relative value"
                 }
             ]
     

@@ -4,6 +4,7 @@ from config import SEARXNG_URL
 from web_scraper import WebScraper
 import pprint
 import time
+from ai_analysis import AIAnalyzer
 
 class NewsSearcher:
     def __init__(self):
@@ -13,6 +14,7 @@ class NewsSearcher:
         )
         # Initialize web scraper
         self.web_scraper = WebScraper()
+        self.ai_analyzer = AIAnalyzer()
        
     
     def search(self, query: str, max_results: int = 3) -> List[Dict]:
@@ -153,18 +155,21 @@ class NewsSearcher:
             
             # Scrape and analyze with debug log
             print(f"\n🔍 Sending URL to web scraper: {url}")
-            analysis = self.web_scraper.scrape_and_analyze(url)
+            scraped_data = self.web_scraper.scrape_and_analyze(url)
             
-            if analysis["success"]:
-                print("✅ Analysis successful")
-                result.update({
-                    "analysis": analysis["summary"],
-                    "sentiment": analysis["sentiment"],
-                    "key_points": analysis["key_points"]
-                })
-                analyzed_results.append(result)
+            if scraped_data["success"]:
+                analysis = self.ai_analyzer.analyze_content(scraped_data)
+                if analysis["success"]:
+                    result.update({
+                        "analysis": analysis["summary"],
+                        "sentiment": analysis["sentiment"],
+                        "key_points": analysis["key_points"]
+                    })
+                    analyzed_results.append(result)
+                else:
+                    print(f"❌ Analysis failed: {analysis.get('error', 'Unknown error')}")
             else:
-                print(f"❌ Analysis failed: {analysis.get('error', 'Unknown error')}")
+                print(f"❌ Scraping failed: {scraped_data.get('error', 'Unknown error')}")
         
         print(f"\n=== Analysis Complete ===")
         print(f"Successfully analyzed {len(analyzed_results)}/{len(results)} articles")
