@@ -8,7 +8,7 @@ from langchain_community.llms import Ollama
 from config import OLLAMA_MODEL, OLLAMA_URL, OLLAMA_EMBEDDING_URL, OLLAMA_EMBEDDING_MODEL
 from proxy_handler import ProxyHandler
 import requests
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -18,6 +18,8 @@ from selenium.webdriver.support import expected_conditions as EC
 import chromadb
 import os
 from chromadb_handler import ChromaDBHandler
+from langchain.schema import BaseRetriever, Document
+from pydantic import Field
 
 # Remove circular import
 # from news_search import NewsSearcher
@@ -149,13 +151,13 @@ class WebScraper:
                     
                     # Run analysis steps
                     summary = qa_chain.invoke("Summarize the main points of this article in 3-4 sentences.")
-                    print(f"✅ Summary generated: {summary['result'][:100]}...")
+                    print(f"✅ Summary generated: {summary['result']}")
                     
                     sentiment = qa_chain.invoke("What is the sentiment of this article regarding the stock or market? Respond with: bullish, bearish, or neutral and explain why.")
-                    print(f"✅ Sentiment analyzed: {sentiment['result'][:100]}...")
+                    print(f"✅ Sentiment analyzed: {sentiment['result']}")
                     
                     key_points = qa_chain.invoke("What are the 3 most important facts or insights from this article?")
-                    print(f"✅ Key points extracted: {key_points['result'][:100]}...")
+                    print(f"✅ Key points extracted: {key_points['result']}")
                     
                     return {
                         "success": True,
@@ -201,29 +203,44 @@ class WebScraper:
             if not chroma_result["success"]:
                 raise ValueError(f"Failed to process chunks: {chroma_result['error']}")
             
-            # Create custom retriever
-            class ChromaRetriever:
-                def __init__(self, chroma_handler):
-                    self.chroma_handler = chroma_handler
+            # Create proper BaseRetriever implementation with Pydantic field
+            class ChromaRetriever(BaseRetriever):
+                chroma_handler: Any = Field(description="ChromaDB handler instance")
                 
-                def get_relevant_documents(self, query):
-                    return self.chroma_handler.query_similar(query)
+                def __init__(self, chroma_handler: Any):
+                    super().__init__(chroma_handler=chroma_handler)
                 
-                async def aget_relevant_documents(self, query):
+                def get_relevant_documents(self, query: str) -> List[Document]:
+                    """Get relevant documents for a query"""
+                    try:
+                        texts = self.chroma_handler.query_similar(query)
+                        # Convert to Document objects
+                        return [Document(page_content=text) for text in texts]
+                    except Exception as e:
+                        print(f"Error in retrieval: {str(e)}")
+                        return []
+                
+                async def aget_relevant_documents(self, query: str) -> List[Document]:
+                    """Async version of get_relevant_documents"""
                     return self.get_relevant_documents(query)
             
             # Create LLM and QA chain
             print("🤖 Initializing LLM...")
-            llm = Ollama(
+            from langchain_ollama import OllamaLLM  # Updated import
+            
+            llm = OllamaLLM(
                 model=self.ollama_model,
                 base_url=self.base_url
             )
             
-            retriever = ChromaRetriever(self.chroma_handler)
+            retriever = ChromaRetriever(chroma_handler=self.chroma_handler)
+            
             qa_chain = RetrievalQA.from_chain_type(
                 llm=llm,
+                chain_type="stuff",
                 retriever=retriever,
-                chain_type="stuff"
+                return_source_documents=True,
+                verbose=True
             )
             
             print("✅ QA Chain created successfully")
