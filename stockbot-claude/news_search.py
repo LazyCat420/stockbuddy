@@ -1,52 +1,69 @@
 from langchain_community.utilities import SearxSearchWrapper
 from typing import List, Dict
 from config import SEARXNG_URL
+from web_scraper import WebScraper
 import pprint
+import time
 
 class NewsSearcher:
     def __init__(self):
         self.searx = SearxSearchWrapper(
             searx_host=SEARXNG_URL,
-            k=10  # Default number of results
+            k=3  # Default number of results
         )
+        # Initialize web scraper
+        self.web_scraper = WebScraper()
+       
     
-    def search(self, query: str, max_results: int = 10) -> List[Dict]:
-        """
-        Core search function using SearxNG via LangChain
-        Returns results with snippet, title, link, engines, and category
-        """
+    def search(self, query: str, max_results: int = 3) -> List[Dict]:
+        """Core search function using SearxNG via LangChain"""
         try:
-            print(f"\nSearching for: {query}")
+            print("\n=== Search Process Start ===")
+            print(f"🔍 Query: {query}")
+            print(f"📊 Max results requested: {max_results}")
+            
             # Get results using LangChain's SearxNG wrapper
             results = self.searx.results(
                 query,
                 num_results=max_results,
-                categories="news, finance"  # Focus on news category
+                categories="news, finance"
             )
             
-            print(f"Found {len(results)} results")
-            # Debug first result
+            print(f"\n📊 Found {len(results)} raw results")
+            
+            # Debug first raw result
             if results:
-                print("Sample result:")
-                pprint.pprint(results[0])
+                print("\n🔍 First Raw Result:")
+                print(f"Link: {results[0].get('link', 'No link')}")
+                print(f"Title: {results[0].get('title', 'No title')}")
             
-            # Process and format results
+            # Process and format results with debugging
             processed_results = []
-            for result in results:
-                processed_results.append({
+            for i, result in enumerate(results, 1):
+                url = result.get('link', '')  # SearxNG uses 'link' for URL
+                print(f"\n🔄 Processing result {i}/{len(results)}")
+                print(f"URL found: {url}")
+                
+                processed_result = {
                     "title": result.get("title", ""),
-                    "content": result.get("snippet", ""),  # SearxNG uses 'snippet' for content
-                    "url": result.get("link", ""),  # SearxNG uses 'link' for URL
-                    "source": result.get("engines", ["unknown"])[0],  # First engine is usually the source
+                    "content": result.get("snippet", ""),
+                    "url": url,  # Store the URL from 'link'
+                    "source": result.get("engines", ["unknown"])[0],
                     "category": result.get("category", "news")
-                })
+                }
+                processed_results.append(processed_result)
+                print(f"✅ Result {i} processed - URL stored: {processed_result['url']}")
             
+            print(f"\n=== Search Process Complete ===")
+            print(f"📝 Processed {len(processed_results)} results")
             return processed_results
             
         except Exception as e:
-            print(f"Error searching news: {str(e)}")
+            print("\n❌ Error in search process:")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error message: {str(e)}")
             import traceback
-            print("Traceback:")
+            print("\nTraceback:")
             print(traceback.format_exc())
             return []
     
@@ -99,4 +116,56 @@ class NewsSearcher:
                 if len(unique_results) >= limit:
                     break
         
-        return unique_results 
+        return unique_results
+    
+    def search_and_analyze(self, query: str, max_results: int = 5) -> List[Dict]:
+        """Search for news and analyze the content of each article sequentially"""
+        print("\n=== Starting News Search and Analysis ===")
+        print(f"🔍 Query: {query}")
+        print(f"📊 Max results: {max_results}")
+        
+        # Get initial search results
+        results = self.search(query, max_results)
+        print(f"\n📊 Found {len(results)} results to analyze")
+        
+        # Debug URLs before analysis
+        print("\n🔍 URLs found for analysis:")
+        for i, result in enumerate(results, 1):
+            print(f"{i}. {result.get('url', 'No URL')}")
+        
+        # Analyze each article one at a time
+        analyzed_results = []
+        
+        for index, result in enumerate(results, 1):
+            url = result.get("url")
+            if not url:
+                print(f"\n⚠️ Skipping result {index} - No URL found")
+                continue
+            
+            print(f"\n=== Processing Article {index}/{len(results)} ===")
+            print(f"📰 Title: {result.get('title', 'No title')}")
+            print(f"🔗 URL being sent to web scraper: {url}")
+            
+            # Add delay between scraping attempts
+            if index > 1:
+                print("⏳ Waiting before next scrape...")
+                time.sleep(5)
+            
+            # Scrape and analyze with debug log
+            print(f"\n🔍 Sending URL to web scraper: {url}")
+            analysis = self.web_scraper.scrape_and_analyze(url)
+            
+            if analysis["success"]:
+                print("✅ Analysis successful")
+                result.update({
+                    "analysis": analysis["summary"],
+                    "sentiment": analysis["sentiment"],
+                    "key_points": analysis["key_points"]
+                })
+                analyzed_results.append(result)
+            else:
+                print(f"❌ Analysis failed: {analysis.get('error', 'Unknown error')}")
+        
+        print(f"\n=== Analysis Complete ===")
+        print(f"Successfully analyzed {len(analyzed_results)}/{len(results)} articles")
+        return analyzed_results 

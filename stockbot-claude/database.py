@@ -1,6 +1,7 @@
 from pymongo import MongoClient
 from datetime import datetime
 from config import MONGODB_URI, DB_NAME, COLLECTIONS
+from typing import List
 
 class DatabaseHandler:
     def __init__(self):
@@ -35,15 +36,24 @@ class DatabaseHandler:
         }
         return collection.insert_one(news_entry)
     
-    def update_watchlist(self, tickers, sector=None):
-        """Update watchlist with new tickers"""
-        collection = self.db[COLLECTIONS["watchlist"]]
-        watchlist_entry = {
-            "tickers": tickers,
-            "sector": sector,
-            "timestamp": datetime.now()
-        }
-        return collection.insert_one(watchlist_entry)
+    def update_watchlist(self, tickers: List[str], sector: str):
+        """Update the watchlist in the database with the given tickers for the sector."""
+        try:
+            collection = self.db[COLLECTIONS["watchlist"]]
+            watchlist_entry = {
+                "sector": sector.upper(),
+                "tickers": tickers,
+                "timestamp": datetime.now()
+            }
+            result = collection.insert_one(watchlist_entry)
+            print(f"Watchlist updated for {sector.upper()}: {tickers}")
+            return result
+        except Exception as e:
+            print(f"Error updating watchlist for {sector}: {str(e)}")
+            import traceback
+            print("Traceback:")
+            print(traceback.format_exc())
+            return None
     
     def save_summary(self, mode, actions_taken, performance_metrics):
         """Save trading session summary"""

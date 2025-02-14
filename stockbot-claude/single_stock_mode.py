@@ -16,7 +16,8 @@ class SingleStockMode:
         """Run single stock trading analysis"""
         try:
             # Step 1: Get initial stock news and data
-            stock_news = self.news_searcher.search_stock_news(ticker)
+            print(f"\n🔍 Searching news for {ticker}...")
+            stock_news = self.news_searcher.search_and_analyze(f"{ticker} stock market news")
             stock_data = self.stock_data.get_stock_data(ticker)
             
             if not stock_data["success"]:
@@ -25,8 +26,17 @@ class SingleStockMode:
                     "error": f"Could not fetch data for {ticker}"
                 }
             
-            # Step 2: Initial news analysis
-            initial_analysis = self.ai_analyzer.analyze_news(stock_news)
+            # Step 2: Process analyzed news
+            analyzed_articles = []
+            for article in stock_news:
+                if article.get("analysis"):  # Only include successfully analyzed articles
+                    analyzed_articles.append({
+                        "summary": article["analysis"],
+                        "sentiment": article["sentiment"],
+                        "key_points": article["key_points"]
+                    })
+            
+            initial_analysis = self.ai_analyzer.analyze_news(analyzed_articles)
             self._save_news(stock_news, ticker)
             
             # Step 3: Generate and answer follow-up questions (2 rounds)

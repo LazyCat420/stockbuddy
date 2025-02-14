@@ -120,6 +120,10 @@ Navigate to the project root (where `main.py` is located) and use the following 
 ## Models List
 athene-v2:latest 
 granite3-dense:8b
+granite3.1-dense:8b-instruct-q8_0
+qwen2.5:32b
+llama3.3:latest
+
 ## Debugging & Logs
 
 The bot prints detailed console logs at every step for debugging purposes. If you encounter an error, check the console output for tracebacks and log messages that indicate where the error occurred.

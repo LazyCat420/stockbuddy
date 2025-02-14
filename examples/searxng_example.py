@@ -9,6 +9,7 @@ def search_market_news(query="What is the latest stock market news?"):
         num_results=5,
         categories="science",
         time_range="year",
+        snippet=True
     )
     pprint.pp(results)
 
