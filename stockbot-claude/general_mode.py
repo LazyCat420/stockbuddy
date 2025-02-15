@@ -37,15 +37,20 @@ class GeneralMode:
             market_news = []
             for url_data in news_urls:
                 url = url_data.get('url')
-                if url:
-                    try:
-                        print(f"\n{console.info(f'📄 Scraping article from: {url}')}")
-                        scraped_data = self.web_scraper.scrape_and_analyze(url)
+                if not url:
+                    continue
+                    
+                try:
+                    print(f"\n{console.info(f'📄 Scraping article from: {url}')}")
+                    scraped_data = self.web_scraper.scrape_and_analyze(url)
+                    
+                    if not scraped_data.get("success"):
+                        continue
                         
-                        if scraped_data["success"]:
-                            print(f"\n{console.highlight('📝 Generating article analysis...')}")
-                            # Create prompt for content analysis
-                            process_prompt = f"""Analyze this financial news article and extract key information:
+                    print(f"\n{console.highlight('📝 Generating article analysis...')}")
+                    
+                    # Create prompt for content analysis
+                    process_prompt = f"""Analyze this financial news article and extract key information:
 
 Content:
 {scraped_data.get('content')}
@@ -81,51 +86,52 @@ Format your response as valid JSON like this:
         "implication 2"
     ]
 }}"""
-                            # Get analysis from LLM
-                            analysis_content = self.ai_analyzer._generate_response(process_prompt)
+                    
+                    # Get analysis from LLM
+                    analysis_content = self.ai_analyzer._generate_response(process_prompt)
+                    
+                    # Clean up JSON
+                    analysis_content = analysis_content.replace(",}", "}")
+                    analysis_content = analysis_content.replace(",]", "]")
+                    
+                    try:
+                        analysis_data = json.loads(analysis_content)
+                        
+                        # Add metadata
+                        analysis_data["source"] = scraped_data.get("metadata", {}).get("source", "unknown")
+                        analysis_data["url"] = url
+                        analysis_data["timestamp"] = str(datetime.now())
+                        
+                        # Save both scraped content and analysis
+                        self._save_news(scraped_data, analysis_data)
+                        
+                        # Add to market news for further analysis
+                        market_news.append({
+                            "content": scraped_data,
+                            "analysis": analysis_data
+                        })
+                        
+                        source = analysis_data["source"]
+                        sentiment = analysis_data["sentiment"]
+                        confidence = str(analysis_data["confidence"])
+                        key_points_count = str(len(analysis_data["key_points"]))
+                        
+                        print(f"\n{console.success('✅ Successfully processed article from ' + source)}")
+                        print(f"{console.info('📊 Sentiment: ' + console.highlight(sentiment) + f' ({console.metric(confidence)}% confidence)')}")
+                        print(f"{console.info('📝 Key Points: ' + console.metric(key_points_count))}")
+                        
+                        if analysis_data.get('mentioned_tickers'):
+                            tickers_str = ', '.join(console.ticker(t['ticker']) for t in analysis_data['mentioned_tickers'])
+                            print(f"{console.info('🎯 Found tickers: ' + tickers_str)}")
                             
-                            # Clean up JSON
-                            analysis_content = analysis_content.replace(",}", "}")
-                            analysis_content = analysis_content.replace(",]", "]")
-                            
-                            try:
-                                analysis_data = json.loads(analysis_content)
-                                
-                                # Add metadata
-                                analysis_data["source"] = scraped_data.get("metadata", {}).get("source", "unknown")
-                                analysis_data["url"] = url
-                                analysis_data["timestamp"] = str(datetime.now())
-                                
-                                # Save both scraped content and analysis
-                                self._save_news(scraped_data, analysis_data)
-                                
-                                # Add to market news for further analysis
-                                market_news.append({
-                                    "content": scraped_data,
-                                    "analysis": analysis_data
-                                })
-                                
-                                source = analysis_data["source"]
-                                sentiment = analysis_data["sentiment"]
-                                confidence = str(analysis_data["confidence"])
-                                key_points_count = str(len(analysis_data["key_points"]))
-                                
-                                print(f"\n{console.success('✅ Successfully processed article from ' + source)}")
-                                print(f"{console.info('📊 Sentiment: ' + console.highlight(sentiment) + f' ({console.metric(confidence)}% confidence)')}")
-                                print(f"{console.info('📝 Key Points: ' + console.metric(key_points_count))}")
-                                
-                                if analysis_data.get('mentioned_tickers'):
-                                    tickers_str = ', '.join(console.ticker(t['ticker']) for t in analysis_data['mentioned_tickers'])
-                                    print(f"{console.info('🎯 Found tickers: ' + tickers_str)}")
-                                
-                            except json.JSONDecodeError as e:
-                                print(f"{console.error('⚠️ JSON parsing error: ' + str(e))}")
-                                print(f"{console.warning('Raw content:')} {analysis_content}")
-                                continue
-                                
-                    except Exception as e:
-                        print(f"{console.error('⚠️ Error processing article: ' + str(e))}")
+                    except json.JSONDecodeError as e:
+                        print(f"{console.error('⚠️ JSON parsing error: ' + str(e))}")
+                        print(f"{console.warning('Raw content:')} {analysis_content}")
                         continue
+                        
+                except Exception as e:
+                    print(f"{console.error('⚠️ Error processing article: ' + str(e))}")
+                    continue
             
             processed_count = str(len(market_news))
             print(f"\n{console.success('✅ Successfully processed ' + console.metric(processed_count) + ' articles')}")
@@ -262,17 +268,18 @@ Format your response as valid JSON like this:
             
             # Save to ChromaDB
             if hasattr(self.ai_analyzer, 'chroma_handler') and self.ai_analyzer.chroma_handler:
-                chroma_data = {
-                    "document": article["content"],
-                    "metadata": {
+                # Save to news collection with same structure as MongoDB
+                self.ai_analyzer.chroma_handler.save_document(
+                    collection_name="news",
+                    document=article["content"],
+                    metadata={
                         "source": article["source"],
                         "url": article["url"],
                         "timestamp": article["timestamp"],
-                        "analysis": article.get("analysis", {})
+                        "analysis": json.dumps(article.get("analysis", {}))  # Convert analysis dict to JSON string
                     }
-                }
-                self.ai_analyzer.chroma_handler.save_analysis("market_news", chroma_data)
-                print(f"{console.success('✅ Saved article and analysis to ChromaDB')}")
+                )
+                print(f"{console.success('✅ Saved article and analysis to ChromaDB news collection')}")
                 
         except Exception as e:
             print(f"{console.error('⚠️ Error saving news: ' + str(e))}")
@@ -292,43 +299,46 @@ Format your response as valid JSON like this:
                 if not ticker:
                     continue
                     
-                print(f"Validating ticker: {ticker} (Sector: {sector})")
+                print(f"{console.info('Validating ticker: ' + console.ticker(ticker) + ' (Sector: ' + sector + ')')}")
                 try:
                     # Validate with yfinance
                     data = self.stock_data.get_stock_data(ticker, period="1d")
                     if data["success"]:
-                        print(f"✅ Valid ticker found: {ticker}")
+                        print(f"{console.success('✅ Valid ticker found: ' + console.ticker(ticker))}")
                         # Initialize sector in dict if not exists
                         if sector not in validated_tickers:
                             validated_tickers[sector] = set()
                         # Add ticker to its sector
                         validated_tickers[sector].add(ticker)
                     else:
-                        print(f"❌ Invalid ticker: {ticker}")
+                        print(f"{console.error('❌ Invalid ticker: ' + console.ticker(ticker))}")
                 except Exception as e:
-                    print(f"⚠️ Error validating ticker {ticker}: {str(e)}")
+                    print(f"{console.error('⚠️ Error validating ticker ' + console.ticker(ticker) + ': ' + str(e))}")
             
             # Save validated tickers to watchlist by sector
             for sector, tickers in validated_tickers.items():
                 if tickers:  # Only save if there are tickers for this sector
-                    print(f"Saving {len(tickers)} tickers for sector: {sector}")
+                    print(f"{console.info('Saving ' + str(len(tickers)) + ' tickers for sector: ' + sector)}")
                     self.db.update_watchlist(list(tickers), sector)
                     
-                    # Save to ChromaDB as well
+                    # Save to ChromaDB watchlist collection
                     if hasattr(self.ai_analyzer, 'chroma_handler') and self.ai_analyzer.chroma_handler:
-                        chroma_data = {
-                            "document": f"Sector: {sector}\nTickers: {', '.join(tickers)}",
-                            "metadata": {
+                        watchlist_data = {
+                            "sector": sector,
+                            "tickers": list(tickers)
+                        }
+                        self.ai_analyzer.chroma_handler.save_document(
+                            collection_name="watchlist",
+                            document=watchlist_data,
+                            metadata={
                                 "sector": sector,
-                                "tickers": list(tickers),
                                 "timestamp": str(datetime.now())
                             }
-                        }
-                        self.ai_analyzer.chroma_handler.save_analysis("watchlist", chroma_data)
-                        print(f"✅ Saved {sector} tickers to ChromaDB watchlist")
+                        )
+                        print(f"{console.success('✅ Saved ' + sector + ' tickers to ChromaDB watchlist')}")
                         
         except Exception as e:
-            print(f"⚠️ Error processing tickers: {str(e)}")
+            print(f"{console.error('⚠️ Error processing tickers: ' + str(e))}")
     
     def _deep_market_analysis(self, market_news: List[Dict]) -> Dict:
         """Perform deep analysis of market news with follow-up questions"""
@@ -345,15 +355,16 @@ Format your response as valid JSON like this:
         # Process raw content through LLM first
         processed_articles = []
         for article in market_news:
-            if article.get("success", False) and article.get("content"):
+            # The article structure should have content and analysis from previous step
+            if article.get("content") and article.get("analysis"):
                 # Create prompt for initial content processing
                 process_prompt = f"""Analyze this financial news article and extract key information:
 
 Content:
-{article.get('content')}
+{article["content"].get("content", "")}
 
-Source: {article.get('metadata', {}).get('source', 'unknown')}
-URL: {article.get('url', '')}
+Source: {article["content"].get("metadata", {}).get("source", "unknown")}
+URL: {article["content"].get("url", "")}
 
 Please provide a structured analysis with the following information:
 - A brief 2-3 sentence summary
@@ -364,11 +375,11 @@ Please provide a structured analysis with the following information:
 - Any stock tickers mentioned with their sectors (only valid stock symbols, 1-5 capital letters)
 - Sector implications
 
-Format your response as valid JSON like this:
-{{
+Format your response like the example JSON below, do not copy the example JSON, just use it as a guide:
+{{{{
     "summary": "your summary here",
     "sentiment": "bullish/bearish/neutral",
-    "confidence": 85,
+    "confidence": 50,
     "key_points": [
         "point 1",
         "point 2"
@@ -382,10 +393,10 @@ Format your response as valid JSON like this:
         "implication 1",
         "implication 2"
     ]
-}}"""
+}}}}"""
                 
                 try:
-                    print(f"\n🔄 Processing article from {article.get('metadata', {}).get('source', 'unknown')}")
+                    print(f"\n🔄 Processing article from {article['content'].get('metadata', {}).get('source', 'unknown')}")
                     
                     # Process through LLM
                     processed_content = self.ai_analyzer._generate_response(process_prompt)
@@ -398,12 +409,12 @@ Format your response as valid JSON like this:
                         processed_data = json.loads(processed_content)
                         
                         # Add source metadata
-                        processed_data["source"] = article.get("metadata", {}).get("source", "unknown")
-                        processed_data["url"] = article.get("url", "")
+                        processed_data["source"] = article["content"].get("metadata", {}).get("source", "unknown")
+                        processed_data["url"] = article["content"].get("url", "")
                         processed_data["timestamp"] = str(datetime.now())
                         
                         # Save both original and processed data
-                        self._save_news(article, processed_data)
+                        self._save_news(article["content"], processed_data)
                         processed_articles.append(processed_data)
                         
                         print(f"✅ Successfully processed article")
@@ -439,20 +450,31 @@ Format your response as valid JSON like this:
             }
             
             # Save to MongoDB
-            self.db.save_summary("market_analysis", combined_summary)
+            self.db.save_summary("market_analysis", combined_summary, {
+                "performance_metrics": {
+                    "articles_processed": len(processed_articles),
+                    "success_rate": len(processed_articles) / len(market_news) if market_news else 0,
+                    "average_confidence": combined_analysis.get("confidence", 0)
+                }
+            })
             print("✅ Saved combined analysis to MongoDB")
             
             # Save to ChromaDB
             if hasattr(self.ai_analyzer, 'chroma_handler') and self.ai_analyzer.chroma_handler:
                 chroma_data = {
-                    "document": json.dumps(combined_analysis, indent=2),
+                    "document": json.dumps(combined_analysis, indent=4),
                     "metadata": {
                         "type": "market_summary",
                         "timestamp": str(datetime.now()),
-                        "articles_analyzed": len(processed_articles)
+                        "articles_analyzed": len(processed_articles),
+                        "analysis": json.dumps(combined_analysis)  # Convert analysis to JSON string
                     }
                 }
-                self.ai_analyzer.chroma_handler.save_analysis("market_summary", chroma_data)
+                self.ai_analyzer.chroma_handler.save_document(
+                    collection_name="summary",
+                    document=chroma_data["document"],
+                    metadata=chroma_data["metadata"]
+                )
                 print("✅ Saved combined analysis to ChromaDB")
                 
         except Exception as e:

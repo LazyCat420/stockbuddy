@@ -155,4 +155,102 @@ class StockDataHandler:
             },
             "price_history": [],
             "volume_history": []
-        } 
+        }
+    
+    def get_detailed_financials(self, ticker: str) -> Dict:
+        """Get detailed financial data for a stock"""
+        try:
+            print(f"Fetching detailed financials for {ticker}...")
+            stock = yf.Ticker(ticker)
+            
+            # Get financial data
+            info = stock.info
+            financials = stock.financials
+            balance_sheet = stock.balance_sheet
+            cash_flow = stock.cashflow
+            
+            # Process and clean the data
+            data = {
+                "success": True,
+                "ticker": ticker,
+                "company_info": {
+                    "name": info.get("longName", ""),
+                    "sector": info.get("sector", ""),
+                    "industry": info.get("industry", ""),
+                    "market_cap": info.get("marketCap", 0),
+                    "pe_ratio": info.get("trailingPE", 0),
+                    "dividend_yield": info.get("dividendYield", 0) if info.get("dividendYield") else 0
+                },
+                "key_metrics": {
+                    "revenue": financials.loc["Total Revenue"].iloc[0] if not financials.empty else 0,
+                    "net_income": financials.loc["Net Income"].iloc[0] if not financials.empty else 0,
+                    "operating_cash_flow": cash_flow.loc["Operating Cash Flow"].iloc[0] if not cash_flow.empty else 0,
+                    "total_assets": balance_sheet.loc["Total Assets"].iloc[0] if not balance_sheet.empty else 0,
+                    "total_debt": balance_sheet.loc["Total Debt"].iloc[0] if not balance_sheet.empty else 0
+                }
+            }
+            
+            return self._convert_dict_values(data)
+            
+        except Exception as e:
+            print(f"Error fetching detailed financials for {ticker}: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "ticker": ticker
+            }
+    
+    def get_market_analysis(self, ticker: str) -> Dict:
+        """Get comprehensive market analysis for a stock"""
+        try:
+            print(f"Generating market analysis for {ticker}...")
+            stock = yf.Ticker(ticker)
+            
+            # Get various data points
+            hist = stock.history(period="6mo")
+            info = stock.info
+            
+            # Calculate additional technical indicators
+            hist['EMA_20'] = hist['Close'].ewm(span=20, adjust=False).mean()
+            hist['MACD'] = hist['Close'].ewm(span=12, adjust=False).mean() - hist['Close'].ewm(span=26, adjust=False).mean()
+            hist['RSI'] = self._calculate_rsi(hist['Close'])
+            hist['Volatility'] = hist['Close'].pct_change().rolling(window=20).std() * (252 ** 0.5)  # Annualized volatility
+            
+            # Get recent performance
+            current_price = hist['Close'].iloc[-1]
+            month_ago_price = hist['Close'].iloc[-21] if len(hist) >= 21 else hist['Close'].iloc[0]
+            three_month_ago_price = hist['Close'].iloc[-63] if len(hist) >= 63 else hist['Close'].iloc[0]
+            
+            data = {
+                "success": True,
+                "ticker": ticker,
+                "current_analysis": {
+                    "price": current_price,
+                    "volume": hist['Volume'].iloc[-1],
+                    "rsi": hist['RSI'].iloc[-1],
+                    "macd": hist['MACD'].iloc[-1],
+                    "volatility": hist['Volatility'].iloc[-1],
+                    "ema_20": hist['EMA_20'].iloc[-1]
+                },
+                "performance": {
+                    "1m_return": ((current_price - month_ago_price) / month_ago_price) * 100,
+                    "3m_return": ((current_price - three_month_ago_price) / three_month_ago_price) * 100,
+                    "avg_volume": hist['Volume'].mean()
+                },
+                "market_context": {
+                    "beta": info.get("beta", 0),
+                    "market_cap": info.get("marketCap", 0),
+                    "sector": info.get("sector", "Unknown"),
+                    "industry": info.get("industry", "Unknown")
+                }
+            }
+            
+            return self._convert_dict_values(data)
+            
+        except Exception as e:
+            print(f"Error generating market analysis for {ticker}: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "ticker": ticker
+            } 

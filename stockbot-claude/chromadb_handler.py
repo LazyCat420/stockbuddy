@@ -8,157 +8,67 @@ import json
 from datetime import datetime, timedelta
 
 class ChromaDBHandler:
-    def __init__(self):
-        print("\n=== Initializing ChromaDB Handler ===")
-        try:
-            self.client = chromadb.PersistentClient(path="./chroma_db")
-            print("✅ ChromaDB client initialized")
-            
-            # Ensure collections exist
-            self._ensure_collection("news_analyses")
-            self._ensure_collection("trading_decisions")
-            self._ensure_collection("sector_analyses")
-            print("✅ Collections initialized")
-            
-        except Exception as e:
-            print(f"❌ Failed to initialize ChromaDB: {str(e)}")
-            raise
+    def __init__(self, persist_directory: str = "chroma_db"):
+        """Initialize ChromaDB with persistent storage"""
+        self.client = chromadb.Client(Settings(
+            persist_directory=persist_directory,
+            anonymized_telemetry=False
+        ))
+        
+        # Initialize collections to match MongoDB structure
+        self.collections = {
+            "account": self.client.get_or_create_collection("account"),
+            "news": self.client.get_or_create_collection("news"),
+            "summary": self.client.get_or_create_collection("summary"),
+            "trades": self.client.get_or_create_collection("trades"),
+            "watchlist": self.client.get_or_create_collection("watchlist")
+        }
+        print("✅ ChromaDB initialized with MongoDB-aligned collections")
     
-    def _ensure_collection(self, collection_name: str) -> None:
-        """Ensure a collection exists, create if it doesn't"""
+    def save_document(self, collection_name: str, document: Dict, metadata: Dict = None) -> bool:
+        """Save a document to specified collection"""
         try:
-            self.client.get_or_create_collection(
-                name=collection_name,
-                metadata={"description": f"Collection for {collection_name}"}
-            )
-        except Exception as e:
-            print(f"❌ Failed to create collection {collection_name}: {str(e)}")
-            raise
-    
-    def save_analysis(self, collection_name: str, data: Dict) -> bool:
-        """Save analysis data to ChromaDB"""
-        try:
-            print(f"\n💾 Saving to {collection_name}...")
+            if collection_name not in self.collections:
+                print(f"❌ Invalid collection name: {collection_name}")
+                return False
+                
+            # Convert document to string if it's a dict
+            doc_str = json.dumps(document) if isinstance(document, dict) else str(document)
             
-            # Get or create collection
-            collection = self.client.get_or_create_collection(collection_name)
-            
-            # Convert analysis to string for embedding
-            analysis_str = json.dumps(data["analysis"])
-            
-            # Generate a unique ID
+            # Generate a unique ID using collection name and timestamp
             doc_id = f"{collection_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             
             # Add the document
-            collection.add(
-                documents=[analysis_str],
-                metadatas=[data["metadata"]],
+            self.collections[collection_name].add(
+                documents=[doc_str],
+                metadatas=[metadata or {}],
                 ids=[doc_id]
             )
             
-            print(f"✅ Saved analysis with ID: {doc_id}")
+            print(f"✅ Saved document to {collection_name} with ID: {doc_id}")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to save analysis: {str(e)}")
+            print(f"❌ Failed to save document to {collection_name}: {str(e)}")
             return False
     
-    def get_recent_analyses(self, collection_name: str, limit: int = 10) -> List[Dict]:
-        """Get most recent analyses from a collection"""
+    def query_collection(self, collection_name: str, query_text: str, n_results: int = 5) -> List[Dict]:
+        """Query documents from a collection"""
         try:
-            collection = self.client.get_collection(collection_name)
+            if collection_name not in self.collections:
+                print(f"❌ Invalid collection name: {collection_name}")
+                return []
             
-            # Query the collection
-            results = collection.query(
-                query_texts=[""],  # Empty query to get all documents
-                n_results=limit
+            results = self.collections[collection_name].query(
+                query_texts=[query_text],
+                n_results=n_results
             )
             
-            # Parse results
-            analyses = []
-            for i, doc in enumerate(results["documents"][0]):
-                try:
-                    analysis = json.loads(doc)
-                    metadata = results["metadatas"][0][i]
-                    analyses.append({
-                        "analysis": analysis,
-                        "metadata": metadata
-                    })
-                except:
-                    continue
-            
-            return analyses
+            return results
             
         except Exception as e:
-            print(f"❌ Failed to get analyses: {str(e)}")
+            print(f"❌ Failed to query {collection_name}: {str(e)}")
             return []
-    
-    def search_analyses(self, collection_name: str, query: str, limit: int = 5) -> List[Dict]:
-        """Search analyses using semantic similarity"""
-        try:
-            collection = self.client.get_collection(collection_name)
-            
-            # Query the collection
-            results = collection.query(
-                query_texts=[query],
-                n_results=limit
-            )
-            
-            # Parse results
-            analyses = []
-            for i, doc in enumerate(results["documents"][0]):
-                try:
-                    analysis = json.loads(doc)
-                    metadata = results["metadatas"][0][i]
-                    distance = results["distances"][0][i]
-                    analyses.append({
-                        "analysis": analysis,
-                        "metadata": metadata,
-                        "relevance_score": 1 - distance  # Convert distance to similarity score
-                    })
-                except:
-                    continue
-            
-            return analyses
-            
-        except Exception as e:
-            print(f"❌ Failed to search analyses: {str(e)}")
-            return []
-    
-    def delete_old_analyses(self, collection_name: str, days_old: int = 30) -> bool:
-        """Delete analyses older than specified days"""
-        try:
-            collection = self.client.get_collection(collection_name)
-            
-            # Calculate cutoff date
-            cutoff = datetime.now() - timedelta(days=days_old)
-            cutoff_str = cutoff.strftime("%Y-%m-%d")
-            
-            # Get all documents
-            results = collection.query(
-                query_texts=[""],
-                n_results=1000000  # Large number to get all documents
-            )
-            
-            # Find IDs to delete
-            ids_to_delete = []
-            for i, metadata in enumerate(results["metadatas"][0]):
-                try:
-                    doc_date = datetime.strptime(metadata["timestamp"][:10], "%Y-%m-%d")
-                    if doc_date < cutoff:
-                        ids_to_delete.append(results["ids"][0][i])
-                except:
-                    continue
-            
-            if ids_to_delete:
-                collection.delete(ids=ids_to_delete)
-                print(f"✅ Deleted {len(ids_to_delete)} old analyses")
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Failed to delete old analyses: {str(e)}")
-            return False
 
     def get_embeddings(self, text: str) -> List[float]:
         """Get embeddings from Ollama"""

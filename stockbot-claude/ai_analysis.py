@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple, Any
 from config import OLLAMA_URL, OLLAMA_MODEL
 import time
 from datetime import datetime
+import re
 
 class AIAnalyzer:
     def __init__(self):
@@ -29,6 +30,9 @@ class AIAnalyzer:
             print("\n🤖 Generating AI response...")
             print("📤 Sending prompt to Ollama...")
             
+            # Clean prompt to use single curly braces
+            prompt = prompt.replace("{{", "{").replace("}}", "}")
+            
             response = requests.post(
                 f"{self.base_url}/api/generate",
                 headers=self.headers,
@@ -49,6 +53,13 @@ class AIAnalyzer:
                 print("⚠️ Empty response received")
                 return ""
                 
+            # Clean response JSON
+            result = result.replace("{{", "{").replace("}}", "}")
+            result = result.strip()
+            
+            # Remove any trailing commas before closing brackets
+            result = re.sub(r',(\s*[}\]])', r'\1', result)
+            
             print(f"📥 Response: {result}")
             return result
             
@@ -106,36 +117,44 @@ class AIAnalyzer:
     
     def _analyze_news_chunk(self, news_chunk: List[Dict]) -> Dict:
         """Analyze a smaller chunk of news articles"""
-        prompt = f"""Analyze these news articles using step-by-step reasoning:
+        max_retries = 3
+        
+        # Create prompt for chunk analysis
+        prompt = f"""Analyze these news articles and provide a structured analysis:
 
-News articles:
+News Articles:
 {json.dumps(news_chunk, indent=2)}
 
-Follow these steps:
-1. First, summarize the key information from each article
-2. Then, identify common themes and patterns
-3. Next, analyze potential market impacts
-4. Consider both bullish and bearish arguments
-5. Finally, synthesize all information into a conclusion
-
-Think through each step carefully and explain your reasoning.
-
-Provide your analysis in JSON format with the following structure:
+Provide analysis in this exact JSON format:
 {{
-    "summaries": ["summary1", "summary2", ...],
-    "themes": ["theme1", "theme2", ...],
+    "summaries": [
+        "summary 1",
+        "summary 2"
+    ],
+    "themes": [
+        "theme 1",
+        "theme 2"
+    ],
     "sentiment": "bullish/bearish/neutral",
     "confidence": 0-100,
-    "key_points": ["point1", "point2", ...],
+    "key_points": [
+        "point 1",
+        "point 2"
+    ],
     "market_impact": "description",
     "reasoning": {{
-        "bullish_factors": ["factor1", "factor2", ...],
-        "bearish_factors": ["factor1", "factor2", ...],
-        "conclusion": "detailed explanation"
+        "bullish_factors": [
+            "factor 1",
+            "factor 2"
+        ],
+        "bearish_factors": [
+            "factor 1",
+            "factor 2"
+        ],
+        "conclusion": "detailed conclusion"
     }}
 }}"""
-        
-        max_retries = 3
+
         for attempt in range(max_retries):
             try:
                 response = self._generate_response(prompt)
@@ -143,6 +162,12 @@ Provide your analysis in JSON format with the following structure:
                     print(f"⚠️ Empty response on attempt {attempt + 1}")
                     continue
                     
+                # Clean the response
+                response = response.strip()
+                response = re.sub(r',(\s*[}\]])', r'\1', response)  # Remove trailing commas
+                response = re.sub(r'}\s*{', '},{', response)  # Fix object separators
+                response = re.sub(r']\s*\[', '],[', response)  # Fix array separators
+                
                 analysis = json.loads(response)
                 
                 # Validate analysis structure
@@ -167,6 +192,11 @@ Provide your analysis in JSON format with the following structure:
                                 "bearish_factors": [],
                                 "conclusion": "No detailed conclusion available"
                             }
+                
+                # Ensure arrays have proper commas
+                for field in ['summaries', 'themes', 'key_points']:
+                    if isinstance(analysis.get(field), list):
+                        analysis[field] = [str(item).strip() for item in analysis[field] if item]
                 
                 # Print detailed analysis steps
                 print("\n📰 News Analysis Process:")
@@ -209,12 +239,10 @@ Provide your analysis in JSON format with the following structure:
             
         try:
             print("\n💾 Saving analysis to ChromaDB...")
-            success = self.chroma_handler.save_analysis(
-                collection_name="news_analyses",
-                data={
-                    "analysis": analysis,
-                    "metadata": metadata
-                }
+            success = self.chroma_handler.save_document(
+                collection_name="summary",
+                document=json.dumps(analysis, indent=4),
+                metadata=metadata
             )
             if success:
                 print("✅ Analysis saved to ChromaDB")
@@ -378,9 +406,9 @@ Provide your decision in JSON format with the following structure:
     "stop_loss": "suggested stop loss price",
     "take_profit": "suggested take profit price",
     "reasoning": {{
-        "technical_factors": ["factor1", "factor2", ...],
-        "fundamental_factors": ["factor1", "factor2", ...],
-        "risk_factors": ["factor1", "factor2", ...],
+        "technical_factors": ["factor1", "factor2", "..."],
+        "fundamental_factors": ["factor1", "factor2", "..."],
+        "risk_factors": ["factor1", "factor2", "..."],
         "decision_process": "detailed explanation"
     }},
     "scenarios": {{
@@ -390,8 +418,8 @@ Provide your decision in JSON format with the following structure:
     }},
     "risk_assessment": {{
         "risk_level": "low/medium/high",
-        "key_risks": ["risk1", "risk2", ...],
-        "mitigation_strategies": ["strategy1", "strategy2", ...]
+        "key_risks": ["risk1", "risk2", "..."],
+        "mitigation_strategies": ["strategy1", "strategy2", "..."]
     }}
 }}"""
         
@@ -454,7 +482,7 @@ Provide your decision in JSON format with the following structure:
             content = scraped_data["content"]
             source = scraped_data["metadata"]["source"]
             
-            prompt = f"""Analyze this {source} content about {{ticker}} and provide:
+            prompt = f"""Analyze this {source} content and provide:
             1. A concise summary focused on market impact
             2. The sentiment (bullish/bearish/neutral) with explanation
             3. Three key insights that could affect trading decisions

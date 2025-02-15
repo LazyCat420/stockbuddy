@@ -17,7 +17,7 @@ class NewsSearcher:
         self.ai_analyzer = AIAnalyzer()
        
     
-    def search(self, query: str, max_results: int = 1) -> List[Dict]:
+    def search(self, query: str, max_results: int = 4) -> List[Dict]:
         """Core search function using SearxNG via LangChain"""
         try:
             print("\n=== Search Process Start ===")
@@ -96,7 +96,7 @@ class NewsSearcher:
         all_results = []
         for q in queries:
             search_query = f"{q} {query}".strip()
-            results = self.search(search_query, max_results=2)
+            results = self.search(search_query, max_results=3)
             all_results.extend(results)
             print(f"Found {len(results)} results for query: {search_query}")
         
@@ -120,7 +120,7 @@ class NewsSearcher:
         
         return unique_results
     
-    def search_and_analyze(self, query: str, max_results: int = 2) -> List[Dict]:
+    def search_and_analyze(self, query: str, max_results: int = 1) -> List[Dict]:
         """Search for news and analyze the content of each article sequentially"""
         print("\n=== Starting News Search and Analysis ===")
         print(f"🔍 Query: {query}")
