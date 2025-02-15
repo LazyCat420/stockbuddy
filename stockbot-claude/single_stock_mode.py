@@ -306,43 +306,64 @@ Format your decision as JSON:
         if decision.get("action") in ["buy", "sell"]:
             print("\n💾 Saving trade to database...")
             
-            # Prepare trade data
-            trade_data = {
-                "ticker": ticker,
-                "action": decision["action"],
-                "price": decision.get("entry_price", 0),
-                "quantity": decision.get("quantity", 0),
-                "personality": personality,
-                "confidence": decision.get("confidence", 0),
-                "stop_loss": decision.get("stop_loss", 0),
-                "take_profit": decision.get("take_profit", 0),
-                "timestamp": datetime.now(),
-                "analysis": {
-                    "sentiment": dominant_sentiment,
-                    "avg_confidence": avg_confidence,
-                    "key_insights": detailed_analysis.get("key_insights", []),
-                    "market_impact": decision.get("market_impact", "")
-                }
+            # Prepare trade data with analysis
+            analysis_data = {
+                "sentiment": dominant_sentiment,
+                "avg_confidence": avg_confidence,
+                "key_insights": detailed_analysis.get("key_insights", []),
+                "market_impact": decision.get("market_impact", ""),
+                "technical_factors": decision.get("reasoning", {}).get("technical_factors", []),
+                "fundamental_factors": decision.get("reasoning", {}).get("fundamental_factors", []),
+                "risk_factors": decision.get("reasoning", {}).get("risk_factors", []),
+                "decision_process": decision.get("reasoning", {}).get("decision_process", ""),
+                "scenarios": decision.get("scenarios", {}),
+                "risk_assessment": decision.get("risk_assessment", {})
             }
             
             # Save to MongoDB
             try:
-                self.db.save_trade(**trade_data)
+                self.db.save_trade(
+                    ticker=ticker,
+                    action=decision["action"],
+                    price=decision.get("entry_price", 0),
+                    quantity=decision.get("quantity", 0),
+                    personality=personality,
+                    confidence=decision.get("confidence", 0),
+                    stop_loss=decision.get("stop_loss", 0),
+                    take_profit=decision.get("take_profit", 0),
+                    analysis=analysis_data
+                )
                 print("✅ Trade saved to MongoDB")
             except Exception as e:
                 print(f"⚠️ Failed to save trade to MongoDB: {str(e)}")
             
-            # Save to ChromaDB
+            # Save to ChromaDB with proper datetime handling
             try:
                 if hasattr(self.ai_analyzer, 'chroma_handler') and self.ai_analyzer.chroma_handler:
+                    # Convert datetime to string in trade data
+                    chroma_trade_data = {
+                        "ticker": ticker,
+                        "action": decision["action"],
+                        "price": decision.get("entry_price", 0),
+                        "quantity": decision.get("quantity", 0),
+                        "personality": personality,
+                        "confidence": decision.get("confidence", 0),
+                        "stop_loss": decision.get("stop_loss", 0),
+                        "take_profit": decision.get("take_profit", 0),
+                        "timestamp": str(datetime.now()),
+                        "status": "open",
+                        "analysis": analysis_data
+                    }
+                    
                     self.ai_analyzer.chroma_handler.save_document(
-                        collection_name="trading_decisions",
-                        document=json.dumps(trade_data, indent=4),
+                        collection_name="trades",  # Changed from trading_decisions to trades
+                        document=json.dumps(chroma_trade_data, indent=4),
                         metadata={
                             "ticker": ticker,
                             "action": decision["action"],
                             "timestamp": str(datetime.now()),
-                            "personality": personality
+                            "personality": personality,
+                            "status": "open"
                         }
                     )
                     print("✅ Trade saved to ChromaDB")

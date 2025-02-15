@@ -8,7 +8,7 @@ class DatabaseHandler:
         self.client = MongoClient(MONGODB_URI)
         self.db = self.client[DB_NAME]
     
-    def save_trade(self, ticker, action, price, quantity, personality, confidence, stop_loss, take_profit):
+    def save_trade(self, ticker, action, price, quantity, personality, confidence, stop_loss, take_profit, analysis=None):
         """Save trade decision to database"""
         collection = self.db[COLLECTIONS["trades"]]
         trade = {
@@ -21,7 +21,8 @@ class DatabaseHandler:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "timestamp": datetime.now(),
-            "status": "open"
+            "status": "open",
+            "analysis": analysis or {}  # Include analysis data if provided
         }
         return collection.insert_one(trade)
     
