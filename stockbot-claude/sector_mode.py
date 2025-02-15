@@ -4,6 +4,7 @@ from news_search import NewsSearcher
 from ai_analysis import AIAnalyzer
 from stock_data import StockDataHandler
 from database import DatabaseHandler
+from utils.console_colors import console
 import json
 
 class SectorMode:
@@ -16,40 +17,42 @@ class SectorMode:
     def run(self, sector: str) -> Dict:
         """Run sector mode trading analysis with enhanced stock analysis"""
         try:
-            print(f"\n=== Starting {sector.upper()} Sector Analysis ===")
+            print(f"\n{console.title(f'=== Starting {sector.upper()} Sector Analysis ===')}")
             
             # Step 1: Get sector specific news
-            print("\n1. Fetching sector news...")
+            print(f"\n{console.title('1. Fetching sector news...')}")
             sector_news = self.news_searcher.search_sector_news(sector)
-            print(f"Found {len(sector_news)} news articles for {sector} sector")
+            print(f"{console.info(f'Found {len(sector_news)} news articles for {sector} sector')}")
             self._save_news(sector_news, sector)
             
             # Step 2: Analyze sector news
-            print("\n2. Analyzing sector news...")
+            print(f"\n{console.title('2. Analyzing sector news...')}")
             sector_analysis = self.ai_analyzer.analyze_news(sector_news)
             
             # Step 3: Extract tickers from news and get additional sector stocks
-            print("\n3. Identifying relevant stocks...")
+            print(f"\n{console.title('3. Identifying relevant stocks...')}")
             news_tickers = self._extract_tickers_from_news(sector_news)
             sector_stocks = self.stock_data.get_sector_stocks(sector)
             
             # Combine and deduplicate tickers
             all_tickers = list(set(news_tickers + sector_stocks))
-            print(f"Total unique stocks to analyze: {len(all_tickers)}")
+            print(f"{console.info(f'Total unique stocks to analyze: {len(all_tickers)}')}")
             
             # Update watchlist in database
             self.db.update_watchlist(all_tickers, sector)
+            print(f"{console.success(f'Watchlist updated for {sector}: {all_tickers}')}")
             
             # Step 4: Analyze each stock with deep analysis
-            print("\n4. Performing deep analysis on each stock...")
+            print(f"\n{console.title('4. Performing deep analysis on each stock...')}")
             trading_decisions = []
             for ticker in all_tickers:
+                print(f"\n{console.info(f'Analyzing {console.ticker(ticker)}...')}")
                 decision = self._analyze_stock(ticker, sector_analysis)
                 if decision:
                     trading_decisions.append(decision)
             
             # Step 5: Generate summary
-            print("\n5. Generating sector summary...")
+            print(f"\n{console.title('5. Generating sector summary...')}")
             summary = self._generate_summary(trading_decisions, sector_analysis, sector)
             self.db.save_summary("sector", trading_decisions, summary)
             
@@ -62,10 +65,10 @@ class SectorMode:
             }
             
         except Exception as e:
-            print(f"\nError in sector mode: {str(e)}")
+            print(f"\n{console.error(f'Error in sector mode: {str(e)}')}")
             import traceback
-            print("Traceback:")
-            print(traceback.format_exc())
+            print(f"{console.error('Traceback:')}")
+            print(f"{console.error(traceback.format_exc())}")
             return {
                 "success": False,
                 "error": str(e)
@@ -78,62 +81,90 @@ class SectorMode:
             self.db.save_news(sector.upper(), article, article.get("source", "unknown"))
     
     def _extract_tickers_from_news(self, news_articles: List[Dict]) -> List[str]:
-        """Extract ticker symbols from news articles using AI analysis"""
-        print("\nExtracting tickers from news articles...")
+        """Extract and validate ticker symbols from news articles using AI analysis and yfinance"""
+        print(f"\n{console.title('Extracting tickers from news articles...')}")
         try:
             # Create a prompt for ticker extraction
-            prompt = f"""Analyze these news articles and identify stock ticker symbols mentioned:
+            prompt = f"""Analyze these news articles and identify stock ticker symbols mentioned.
+Only include valid stock tickers (1-5 capital letters) that you are highly confident about.
+Format your response as a valid JSON object with this exact structure:
 
-News articles:
-{json.dumps(news_articles, indent=2)}
-
-Follow these steps:
-1. Identify any company names and their stock tickers
-2. Verify that each ticker is a valid stock symbol (2-5 capital letters)
-3. Rank tickers by relevance and mention frequency
-4. Return only the most relevant tickers
-
-Provide your analysis in JSON format:
 {{
-    "identified_tickers": ["TICKER1", "TICKER2", ...],
-    "company_mentions": [
-        {{"company": "Company Name", "ticker": "TICK", "relevance": "high/medium/low"}}
+    "identified_tickers": [
+        {{
+            "ticker": "AAPL",
+            "company": "Apple Inc",
+            "sector": "TECHNOLOGY",
+            "confidence": 95
+        }}
     ]
 }}
 
-Think through each step carefully and explain your reasoning."""
+Only include tickers you are very confident about. If no valid tickers are found, return an empty array.
+Do not include any explanatory text outside the JSON structure.
+
+News articles to analyze:
+{json.dumps([{
+    "title": article.get("title", ""),
+    "content": article.get("content", ""),
+    "source": article.get("source", "unknown")
+} for article in news_articles], indent=2)}"""
 
             # Get AI response
             response = self.ai_analyzer._generate_response(prompt)
-            analysis = json.loads(response)
             
-            # Extract tickers
-            tickers = analysis.get("identified_tickers", [])
-            print(f"\nFound {len(tickers)} potential tickers:")
-            for company in analysis.get("company_mentions", []):
-                print(f"- {company['ticker']} ({company['company']}, Relevance: {company['relevance']})")
-            
-            # Validate tickers using yfinance
-            valid_tickers = []
-            for ticker in tickers:
-                print(f"\nValidating {ticker}...")
-                data = self.stock_data.get_stock_data(ticker, period="1d")
-                if data["success"]:
-                    print(f"✓ {ticker} is valid")
-                    # Do deep analysis on validated ticker
-                    detailed_analysis = self._deep_stock_analysis(ticker, {})
-                    if detailed_analysis:
-                        valid_tickers.append(ticker)
+            try:
+                # Clean up response to ensure it's valid JSON
+                response = response.strip()
+                if not response.startswith("{"):
+                    start_idx = response.find("{")
+                    if start_idx != -1:
+                        response = response[start_idx:]
+                    else:
+                        print(f"{console.warning('No valid JSON found in response')}")
+                        return []
+                
+                # Parse JSON
+                analysis = json.loads(response)
+                
+                # Extract and validate tickers with yfinance
+                valid_tickers = []
+                for ticker_info in analysis.get("identified_tickers", []):
+                    ticker = ticker_info.get("ticker")
+                    confidence = ticker_info.get("confidence", 0)
+                    
+                    if ticker and confidence >= 80:  # Only include high confidence tickers
+                        print(f"\n{console.info(f'Validating {console.ticker(ticker)}...')}")
+                        try:
+                            # Use yfinance to validate ticker
+                            data = self.stock_data.get_stock_data(ticker, period="1d")
+                            if data["success"] and data.get("data") is not None:
+                                print(f"{console.success(f'✓ {ticker} is valid ({confidence}% confidence)')}")
+                                valid_tickers.append(ticker)
+                            else:
+                                print(f"{console.error(f'✗ {ticker} is invalid - no data found')}")
+                        except Exception as e:
+                            print(f"{console.error(f'✗ Error validating {ticker}: {str(e)}')}")
+                            continue
+                
+                if not valid_tickers:
+                    print(f"{console.warning('No valid tickers found in news articles')}")
                 else:
-                    print(f"✗ {ticker} is invalid: {data.get('error', 'Unknown error')}")
-            
-            return valid_tickers
-
+                    print(f"{console.success(f'Found {len(valid_tickers)} valid tickers')}")
+                
+                return valid_tickers
+                
+            except json.JSONDecodeError as e:
+                print(f"{console.error(f'Error parsing JSON response: {str(e)}')}")
+                print(f"{console.warning('Raw response:')}")
+                print(response)
+                return []
+                
         except Exception as e:
-            print(f"Error extracting tickers: {str(e)}")
+            print(f"{console.error(f'Error extracting tickers: {str(e)}')}")
             import traceback
-            print("Traceback:")
-            print(traceback.format_exc())
+            print(f"{console.error('Traceback:')}")
+            print(f"{console.error(traceback.format_exc())}")
             return []
     
     def _deep_stock_analysis(self, ticker: str, sector_analysis: Dict) -> Dict:

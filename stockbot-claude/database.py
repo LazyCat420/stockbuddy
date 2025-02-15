@@ -36,24 +36,46 @@ class DatabaseHandler:
         }
         return collection.insert_one(news_entry)
     
-    def update_watchlist(self, tickers: List[str], sector: str):
-        """Update the watchlist in the database with the given tickers for the sector."""
+    def update_watchlist(self, tickers: List[str], sector: str) -> None:
+        """Update watchlist with new tickers for a sector"""
         try:
-            collection = self.db[COLLECTIONS["watchlist"]]
-            watchlist_entry = {
-                "sector": sector.upper(),
-                "tickers": tickers,
-                "timestamp": datetime.now()
-            }
-            result = collection.insert_one(watchlist_entry)
-            print(f"Watchlist updated for {sector.upper()}: {tickers}")
-            return result
+            # Get the watchlist collection
+            collection = self.db["watchlist"]
+            
+            # Update or insert the sector document
+            collection.update_one(
+                {"sector": sector},
+                {
+                    "$set": {
+                        "sector": sector,
+                        "tickers": tickers,
+                        "last_updated": str(datetime.now())
+                    }
+                },
+                upsert=True
+            )
         except Exception as e:
-            print(f"Error updating watchlist for {sector}: {str(e)}")
-            import traceback
-            print("Traceback:")
-            print(traceback.format_exc())
-            return None
+            print(f"Error updating watchlist: {str(e)}")
+            
+    def get_watchlist(self) -> List[str]:
+        """Get all tickers from the watchlist across all sectors"""
+        try:
+            # Get the watchlist collection
+            collection = self.db["watchlist"]
+            
+            # Get all sector documents
+            sector_docs = collection.find({})
+            
+            # Collect all unique tickers
+            all_tickers = set()
+            for doc in sector_docs:
+                tickers = doc.get("tickers", [])
+                all_tickers.update(tickers)
+            
+            return list(all_tickers)
+        except Exception as e:
+            print(f"Error getting watchlist: {str(e)}")
+            return []
     
     def save_summary(self, mode, actions_taken, performance_metrics):
         """Save trading session summary"""

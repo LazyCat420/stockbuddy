@@ -28,4 +28,9 @@ Collection: tickers with summaries
 2. When asking questions to search thru searxng make sure the question is formatted like a search query rather than a question. for example if you ask "What is the impacts of the fear and greed index to traffs" have the llm shorten and format it into a search query such as "fear and greed index assiciation to tarrifs". That way it uses less words to get to the answer and will have a higher chance of getting unique results. 
 
 
+Add colors to other modules (general_mode, single_stock_mode)
+Add more color combinations
+Add background colors for special highlights
+Add progress bars with colors
 
+Thank you!
