@@ -4,6 +4,7 @@ from news_search import NewsSearcher
 from ai_analysis import AIAnalyzer
 from stock_data import StockDataHandler
 from database import DatabaseHandler
+import json
 
 class SingleStockMode:
     def __init__(self):
@@ -235,19 +236,71 @@ class SingleStockMode:
         personality = self.ai_analyzer.select_trading_personality()
         print(f"Selected personality: {personality}")
         
-        # Generate final trading decision
+        # Generate final trading decision with enforced JSON structure
         print("\n🎯 Generating final decision...")
-        decision = self.ai_analyzer.generate_trading_decision(
-            ticker=ticker,
-            news_analysis={
-                "sentiment": dominant_sentiment,
-                "confidence": avg_confidence,
-                "key_points": detailed_analysis.get("key_insights", []),
-                "market_impact": "\n".join(i.get("market_impact", "") for i in all_insights if i.get("market_impact"))
-            },
-            stock_data=stock_data,
-            personality=personality
-        )
+        decision_prompt = f"""As a {personality} trader, analyze this data and make a trading decision:
+
+Ticker: {ticker}
+Sentiment: {dominant_sentiment}
+Confidence: {avg_confidence}%
+Key Insights: {json.dumps(detailed_analysis.get("key_insights", []))}
+Market Impact: {json.dumps([i.get("market_impact", "") for i in all_insights if i.get("market_impact")])}
+Stock Data: {json.dumps(stock_data)}
+
+Format your decision as JSON:
+{{
+    "action": "buy/sell/hold",
+    "confidence": 0-100,
+    "quantity": "number of shares",
+    "entry_price": "suggested entry price",
+    "stop_loss": "suggested stop loss price",
+    "take_profit": "suggested take profit price",
+    "reasoning": {{
+        "technical_factors": ["factor1", "factor2"],
+        "fundamental_factors": ["factor1", "factor2"],
+        "risk_factors": ["factor1", "factor2"],
+        "decision_process": "detailed explanation"
+    }},
+    "scenarios": {{
+        "best_case": "description",
+        "worst_case": "description",
+        "most_likely": "description"
+    }},
+    "risk_assessment": {{
+        "risk_level": "low/medium/high",
+        "key_risks": ["risk1", "risk2"],
+        "mitigation_strategies": ["strategy1", "strategy2"]
+    }}
+}}"""
+        
+        try:
+            decision = json.loads(self.ai_analyzer._generate_response(decision_prompt))
+        except json.JSONDecodeError:
+            print("⚠️ Error parsing decision JSON, using default hold decision")
+            decision = {
+                "action": "hold",
+                "confidence": 0,
+                "quantity": 0,
+                "entry_price": 0,
+                "stop_loss": 0,
+                "take_profit": 0,
+                "reasoning": {
+                    "technical_factors": [],
+                    "fundamental_factors": [],
+                    "risk_factors": [],
+                    "decision_process": "Error generating decision"
+                },
+                "scenarios": {
+                    "best_case": "Unknown",
+                    "worst_case": "Unknown",
+                    "most_likely": "Unknown"
+                },
+                "risk_assessment": {
+                    "risk_level": "high",
+                    "key_risks": ["Decision generation failed"],
+                    "mitigation_strategies": ["Manual review required"]
+                }
+            }
         
         # Save trade if action is buy or sell
         if decision.get("action") in ["buy", "sell"]:
@@ -282,16 +335,14 @@ class SingleStockMode:
             # Save to ChromaDB
             try:
                 if hasattr(self.ai_analyzer, 'chroma_handler') and self.ai_analyzer.chroma_handler:
-                    self.ai_analyzer.chroma_handler.save_analysis(
+                    self.ai_analyzer.chroma_handler.save_document(
                         collection_name="trading_decisions",
-                        data={
-                            "analysis": trade_data,
-                            "metadata": {
-                                "ticker": ticker,
-                                "action": decision["action"],
-                                "timestamp": str(datetime.now()),
-                                "personality": personality
-                            }
+                        document=json.dumps(trade_data, indent=4),
+                        metadata={
+                            "ticker": ticker,
+                            "action": decision["action"],
+                            "timestamp": str(datetime.now()),
+                            "personality": personality
                         }
                     )
                     print("✅ Trade saved to ChromaDB")

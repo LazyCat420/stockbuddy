@@ -57,8 +57,38 @@ class AIAnalyzer:
             result = result.replace("{{", "{").replace("}}", "}")
             result = result.strip()
             
-            # Remove any trailing commas before closing brackets
-            result = re.sub(r',(\s*[}\]])', r'\1', result)
+            # Fix common JSON formatting issues
+            result = re.sub(r',(\s*[}\]])', r'\1', result)  # Remove trailing commas
+            result = re.sub(r'}\s*{', '},{', result)  # Fix object separators
+            result = re.sub(r']\s*\[', '],[', result)  # Fix array separators
+            result = re.sub(r'(["\'])\s*\n\s*(["\'])', r'\1,\2', result)  # Add missing commas between strings
+            result = re.sub(r'(["\'])\s*(["\'])', r'\1,\2', result)  # Add missing commas between strings
+            
+            # Fix array elements missing commas
+            result = re.sub(r'(["\']\s*})\s*(\s*["\'])', r'\1,\2', result)  # Add missing commas between array elements
+            result = re.sub(r'(})\s*({)', r'},\1', result)  # Add missing commas between objects
+            
+            # Validate JSON structure
+            try:
+                parsed_json = json.loads(result)
+                result = json.dumps(parsed_json, indent=4)  # Reformat with proper indentation
+            except json.JSONDecodeError as e:
+                print(f"⚠️ JSON parsing error: {str(e)}")
+                print("Raw content:", result)
+                
+                # Additional cleanup for specific cases
+                if '"key_points": [' in result:
+                    # Fix missing commas in arrays
+                    pattern = r'(\s*"[^"]+"\s*)\s+(\s*")'
+                    result = re.sub(pattern, r'\1,\2', result)
+                
+                # Try parsing again after additional cleanup
+                try:
+                    parsed_json = json.loads(result)
+                    result = json.dumps(parsed_json, indent=4)
+                except json.JSONDecodeError:
+                    print("⚠️ Failed to fix JSON structure")
+                    return ""
             
             print(f"📥 Response: {result}")
             return result
@@ -291,24 +321,46 @@ Provide analysis in this exact JSON format:
         all_bullish = list(dict.fromkeys(all_bullish))
         all_bearish = list(dict.fromkeys(all_bearish))
         
-        # Generate combined market impact and conclusion
-        combined_impact = self._generate_response(f"""Synthesize these analyses into a cohesive market impact statement:
+        # Generate combined market impact and conclusion with enforced JSON structure
+        impact_prompt = f"""Synthesize these analyses into a market impact statement:
 
 Themes: {json.dumps(all_themes)}
 Key Points: {json.dumps(all_key_points)}
 Overall Sentiment: {overall_sentiment}
 Confidence: {avg_confidence}%
 
-Provide a concise market impact analysis.""")
+Format response as JSON:
+{{
+    "market_impact": "your concise market impact analysis here"
+}}"""
         
-        combined_conclusion = self._generate_response(f"""Create a detailed conclusion based on these factors:
+        conclusion_prompt = f"""Create a detailed conclusion based on these factors:
 
 Bullish Factors: {json.dumps(all_bullish)}
 Bearish Factors: {json.dumps(all_bearish)}
 Overall Sentiment: {overall_sentiment}
 Confidence: {avg_confidence}%
 
-Provide a thorough conclusion that weighs all factors.""")
+Format response as JSON:
+{{
+    "conclusion": "your thorough conclusion here",
+    "sentiment": "{overall_sentiment}",
+    "confidence": {avg_confidence},
+    "bullish_summary": "summary of bullish factors",
+    "bearish_summary": "summary of bearish factors"
+}}"""
+        
+        try:
+            impact_response = json.loads(self._generate_response(impact_prompt))
+            conclusion_response = json.loads(self._generate_response(conclusion_prompt))
+            
+            combined_impact = impact_response.get("market_impact", "No market impact available")
+            combined_conclusion = conclusion_response.get("conclusion", "No conclusion available")
+            
+        except json.JSONDecodeError:
+            print("⚠️ Error parsing impact/conclusion JSON, using defaults")
+            combined_impact = "Error generating market impact"
+            combined_conclusion = "Error generating conclusion"
         
         combined_analysis = {
             "summaries": all_summaries,
@@ -324,7 +376,7 @@ Provide a thorough conclusion that weighs all factors.""")
             }
         }
         
-        # Save to ChromaDB
+        # Save to ChromaDB with proper JSON structure
         self._save_to_chroma(
             analysis=combined_analysis,
             metadata={
