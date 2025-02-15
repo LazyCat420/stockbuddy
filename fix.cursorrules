@@ -1,0 +1,31 @@
+List of things to fix:
+
+1. the ticker in the news folder of the stockbot Mongo database needs to be fixed so it saves the ticker symbol of stocks being mentioned in the news articles. Make sure to handle the data in this order. 
+
+Database: stockbot
+Collection: scraped news
+Collection: news with summaries
+Collection: scraped sector data
+Collection: sector with summaries
+Collection: watchlist of tickers checked by yfinance if they are valid tickers
+Collection: trades with summaries 
+Collection: tickers with summaries 
+
+
+
+- Search General stock market news 
+- Scrape the news articles 
+- Save the news articles to the Mongo database and Chroma database under a seperate news folder. 
+- Summarize the news articles and extract stock tickers from the news articles with ollama tool calling. 
+- use yfinance to make sure its valid tickers and save the tickers to the Mongo database and Chroma database under a seperate watchlist folder. 
+- Save the summary to the Mongo database and Chroma database under a seperate summary folder. 
+- repeat until all the news articles are summarized then summarize all the summaries with ollama to a final summary.
+- Go thru each ticker in the watchlist based on the flow we build for the @single_stock_mode.py file. 
+- Save the trades with summaries of the trading data to the Mongo database and Chroma database under a seperate trades folder. 
+
+ I want it so When I run General @general_mode.py  pulls tickers and sectors, then we run Sector Analysis with @sector_mode.py  and it pulls more tickers to send to the watchlist in the database, then finally we run Single Stock Analysis on all the tickers in the watchlist using the @single_stock_mode.py. 
+
+2. When asking questions to search thru searxng make sure the question is formatted like a search query rather than a question. for example if you ask "What is the impacts of the fear and greed index to traffs" have the llm shorten and format it into a search query such as "fear and greed index assiciation to tarrifs". That way it uses less words to get to the answer and will have a higher chance of getting unique results. 
+
+
+
