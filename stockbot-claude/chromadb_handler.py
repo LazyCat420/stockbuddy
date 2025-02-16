@@ -23,7 +23,7 @@ class ChromaDBHandler:
             "trades": self.client.get_or_create_collection("trades"),
             "watchlist": self.client.get_or_create_collection("watchlist")
         }
-        print("✅ ChromaDB initialized with MongoDB-aligned collections")
+        # print("✅ ChromaDB initialized with MongoDB-aligned collections")
     
     def save_document(self, collection_name: str, document: Dict, metadata: Dict = None) -> bool:
         """Save a document to specified collection"""

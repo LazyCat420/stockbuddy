@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+import time
 
 class StockDataHandler:
     def __init__(self):
@@ -70,66 +71,88 @@ class StockDataHandler:
             ticker = ticker.strip().upper()
             print(f"Formatted ticker: {ticker}")
             
-            # Create ticker object
-            stock = yf.Ticker(ticker)
+            # Input validation
+            if not ticker or not isinstance(ticker, str) or len(ticker) > 5:
+                return self._create_error_response(f"Invalid ticker format: {ticker}")
             
-            # Try to get basic info first to validate ticker
-            try:
-                info = stock.info
-                if not info or 'regularMarketPrice' not in info:
-                    print(f"❌ Invalid ticker {ticker} - no market data available")
-                    return self._create_error_response(f"Invalid ticker {ticker} - no market data available")
-            except Exception as e:
-                print(f"❌ Error validating ticker {ticker}: {str(e)}")
-                return self._create_error_response(f"Invalid ticker {ticker} - {str(e)}")
+            # Create ticker object with retry mechanism
+            max_retries = 3
+            last_error = None
             
-            print(f"✓ Validated ticker {ticker}")
-            print(f"Company Name: {info.get('longName', 'N/A')}")
-            print(f"Sector: {info.get('sector', 'N/A')}")
+            for attempt in range(max_retries):
+                try:
+                    stock = yf.Ticker(ticker)
+                    
+                    # Try to get basic info first to validate ticker
+                    info = stock.info
+                    if not info:
+                        raise ValueError("Empty info response")
+                    if 'regularMarketPrice' not in info:
+                        raise ValueError("No market price available")
+                    
+                    print(f"✓ Validated ticker {ticker}")
+                    print(f"Company Name: {info.get('longName', 'N/A')}")
+                    print(f"Sector: {info.get('sector', 'N/A')}")
+                    
+                    # Get historical data with error handling
+                    hist = stock.history(period=period)
+                    if hist.empty:
+                        raise ValueError("No historical data available")
+                    
+                    print(f"✓ Retrieved {len(hist)} historical data points")
+                    
+                    # Calculate technical indicators with error handling
+                    try:
+                        hist['SMA_20'] = hist['Close'].rolling(window=20).mean()
+                        hist['SMA_50'] = hist['Close'].rolling(window=50).mean()
+                        hist['RSI'] = self._calculate_rsi(hist['Close'])
+                    except Exception as e:
+                        print(f"Warning: Error calculating technical indicators: {str(e)}")
+                        hist['SMA_20'] = hist['SMA_50'] = hist['RSI'] = float('nan')
+                    
+                    latest_price = hist['Close'].iloc[-1]
+                    print(f"Current Price: ${latest_price:.2f}")
+                    
+                    data = {
+                        "ticker": ticker,
+                        "current_price": latest_price,
+                        "daily_change": self._calculate_daily_change(hist),
+                        "volume": hist['Volume'].iloc[-1],
+                        "technical_indicators": {
+                            "sma_20": hist['SMA_20'].iloc[-1],
+                            "sma_50": hist['SMA_50'].iloc[-1],
+                            "rsi": hist['RSI'].iloc[-1]
+                        },
+                        "price_history": hist['Close'].tolist(),
+                        "volume_history": hist['Volume'].tolist(),
+                        "success": True,
+                        "company_info": {
+                            "name": info.get('longName', ''),
+                            "sector": info.get('sector', ''),
+                            "industry": info.get('industry', '')
+                        }
+                    }
+                    
+                    # Convert all numeric values to standard Python types
+                    return self._convert_dict_values(data)
+                    
+                except Exception as e:
+                    last_error = str(e)
+                    print(f"❌ Attempt {attempt + 1}/{max_retries} failed: {str(e)}")
+                    if attempt < max_retries - 1:
+                        print(f"Retrying in 1 second...")
+                        time.sleep(1)
+                        continue
+                    break
             
-            # Get historical data
-            hist = stock.history(period=period)
-            
-            if hist.empty:
-                print(f"❌ No historical data found for {ticker}")
-                return self._create_error_response(f"No historical data found for {ticker}")
-            
-            print(f"✓ Retrieved {len(hist)} historical data points")
-            
-            # Calculate technical indicators
-            hist['SMA_20'] = hist['Close'].rolling(window=20).mean()
-            hist['SMA_50'] = hist['Close'].rolling(window=50).mean()
-            hist['RSI'] = self._calculate_rsi(hist['Close'])
-            
-            latest_price = hist['Close'].iloc[-1]
-            print(f"Current Price: ${latest_price:.2f}")
-            
-            data = {
-                "ticker": ticker,
-                "current_price": latest_price,
-                "daily_change": self._calculate_daily_change(hist),
-                "volume": hist['Volume'].iloc[-1],
-                "technical_indicators": {
-                    "sma_20": hist['SMA_20'].iloc[-1],
-                    "sma_50": hist['SMA_50'].iloc[-1],
-                    "rsi": hist['RSI'].iloc[-1]
-                },
-                "price_history": hist['Close'].tolist(),
-                "volume_history": hist['Volume'].tolist(),
-                "success": True,
-                "company_info": {
-                    "name": info.get('longName', ''),
-                    "sector": info.get('sector', ''),
-                    "industry": info.get('industry', '')
-                }
-            }
-            
-            # Convert all numeric values to standard Python types
-            return self._convert_dict_values(data)
+            error_msg = f"Failed to fetch data after {max_retries} attempts. Last error: {last_error}"
+            print(f"❌ {error_msg}")
+            return self._create_error_response(error_msg)
             
         except Exception as e:
-            print(f"❌ Error fetching data for {ticker}: {str(e)}")
-            return self._create_error_response(str(e))
+            error_msg = f"Unexpected error fetching data for {ticker}: {str(e)}"
+            print(f"❌ {error_msg}")
+            return self._create_error_response(error_msg)
     
     def get_market_overview(self) -> Dict:
         """Get overview of major market indices"""
@@ -151,15 +174,41 @@ class StockDataHandler:
     
     def _calculate_rsi(self, prices: pd.Series, periods: int = 14) -> pd.Series:
         """Calculate Relative Strength Index"""
-        delta = prices.diff()
-        
-        gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
-        
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
+        try:
+            # Handle empty or invalid price data
+            if prices.empty or prices.isna().all():
+                return pd.Series([float('nan')] * len(prices))
+
+            # Calculate price changes
+            delta = prices.diff()
+            
+            # Separate gains and losses
+            gains = delta.where(delta > 0, 0.0)
+            losses = -delta.where(delta < 0, 0.0)
+            
+            # Calculate rolling averages
+            avg_gains = gains.rolling(window=periods, min_periods=1).mean()
+            avg_losses = losses.rolling(window=periods, min_periods=1).mean()
+            
+            # Calculate RS with handling division by zero
+            rs = pd.Series([float('nan')] * len(prices))  # Initialize with NaN
+            valid_denominator = avg_losses != 0
+            rs[valid_denominator] = avg_gains[valid_denominator] / avg_losses[valid_denominator]
+            
+            # Calculate RSI with proper bounds
+            rsi = 100 - (100 / (1 + rs))
+            
+            # Ensure RSI stays within 0-100 bounds
+            rsi = rsi.clip(lower=0, upper=100)
+            
+            # Replace any remaining invalid values with NaN
+            rsi = rsi.replace([np.inf, -np.inf], float('nan'))
+            
+            return rsi
+            
+        except Exception as e:
+            print(f"Warning: Error calculating RSI: {str(e)}")
+            return pd.Series([float('nan')] * len(prices))
     
     def _calculate_daily_change(self, hist: pd.DataFrame) -> float:
         """Calculate daily price change percentage"""

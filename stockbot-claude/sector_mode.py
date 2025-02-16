@@ -6,6 +6,8 @@ from stock_data import StockDataHandler
 from database import DatabaseHandler
 from utils.console_colors import console
 import json
+import time
+from single_stock_mode import SingleStockMode
 
 class SectorMode:
     def __init__(self):
@@ -136,55 +138,64 @@ News articles to analyze:
     "source": article.get("source", "unknown")
 } for article in news_articles], indent=2)}"""
 
-            # Get AI response
-            response = self.ai_analyzer._generate_response(prompt)
-            
-            try:
-                # Clean up response to ensure it's valid JSON
-                response = response.strip()
-                if not response.startswith("{"):
-                    start_idx = response.find("{")
-                    if start_idx != -1:
-                        response = response[start_idx:]
-                    else:
-                        print(f"{console.warning('No valid JSON found in response')}")
-                        return []
-                
-                # Parse JSON
-                analysis = json.loads(response)
-                
-                # Extract and validate tickers with yfinance
-                valid_tickers = []
-                for ticker_info in analysis.get("identified_tickers", []):
-                    ticker = ticker_info.get("ticker")
-                    confidence = ticker_info.get("confidence", 0)
+            # Get AI response with retry mechanism
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = self.ai_analyzer._generate_response(prompt)
+                    response = response.strip()
                     
-                    if ticker and confidence >= 80:  # Only include high confidence tickers
-                        print(f"\n{console.info(f'Validating {console.ticker(ticker)}...')}")
-                        try:
-                            # Use yfinance to validate ticker
-                            data = self.stock_data.get_stock_data(ticker, period="1d")
-                            if data["success"] and data.get("data") is not None:
-                                print(f"{console.success(f'✓ {ticker} is valid ({confidence}% confidence)')}")
+                    # Clean up response to ensure it's valid JSON
+                    if not response.startswith("{"):
+                        start_idx = response.find("{")
+                        if start_idx != -1:
+                            response = response[start_idx:]
+                        else:
+                            print(f"{console.warning('No valid JSON found in response')}")
+                            if attempt < max_retries - 1:
+                                print(f"Retrying... (Attempt {attempt + 2}/{max_retries})")
+                                time.sleep(1)  # Add delay between retries
+                                continue
+                            return []
+                    
+                    # Parse JSON
+                    analysis = json.loads(response)
+                    
+                    # Extract tickers and get their data (but don't validate)
+                    valid_tickers = []
+                    for ticker_info in analysis.get("identified_tickers", []):
+                        ticker = ticker_info.get("ticker", "").strip().upper()
+                        confidence = ticker_info.get("confidence", 0)
+                        
+                        if ticker and confidence >= 80:  # Only include high confidence tickers
+                            print(f"\n{console.info(f'Getting data for {console.ticker(ticker)}...')}")
+                            try:
+                                # Get stock data for later analysis
+                                time.sleep(0.5)  # Add delay between API calls
+                                data = self.stock_data.get_stock_data(ticker, period="1d")
                                 valid_tickers.append(ticker)
-                            else:
-                                print(f"{console.error(f'✗ {ticker} is invalid - no data found')}")
-                        except Exception as e:
-                            print(f"{console.error(f'✗ Error validating {ticker}: {str(e)}')}")
-                            continue
-                
-                if not valid_tickers:
-                    print(f"{console.warning('No valid tickers found in news articles')}")
-                else:
-                    print(f"{console.success(f'Found {len(valid_tickers)} valid tickers')}")
-                
-                return valid_tickers
-                
-            except json.JSONDecodeError as e:
-                print(f"{console.error(f'Error parsing JSON response: {str(e)}')}")
-                print(f"{console.warning('Raw response:')}")
-                print(response)
-                return []
+                                print(f"{console.success(f'✓ Added {ticker} ({confidence}% confidence)')}")
+                            except Exception as e:
+                                print(f"{console.warning(f'⚠️ Could not get data for {ticker}, but including it anyway')}")
+                                valid_tickers.append(ticker)
+                    
+                    if not valid_tickers:
+                        print(f"{console.warning('No valid tickers found in news articles')}")
+                    else:
+                        tickers_str = ", ".join(valid_tickers)
+                        print(f"{console.success(f'Found {len(valid_tickers)} valid tickers: {tickers_str}')}")
+                    
+                    return valid_tickers
+                    
+                except json.JSONDecodeError as e:
+                    print(f"{console.error(f'Error parsing JSON response: {str(e)}')}")
+                    print(f"{console.warning('Raw response:')}")
+                    print(response)
+                    if attempt < max_retries - 1:
+                        print(f"Retrying... (Attempt {attempt + 2}/{max_retries})")
+                        time.sleep(1)
+                        continue
+                    return []
                 
         except Exception as e:
             print(f"{console.error(f'Error extracting tickers: {str(e)}')}")
@@ -193,160 +204,28 @@ News articles to analyze:
             print(f"{console.error(traceback.format_exc())}")
             return []
     
-    def _deep_stock_analysis(self, ticker: str, sector_analysis: Dict) -> Dict:
-        """Perform deep analysis through multiple rounds of questioning"""
-        print(f"\nStarting deep analysis for {ticker}...")
-        
-        all_findings = {
-            "rounds": [],
-            "key_insights": []
-        }
-        
-        # Start with initial stock news and sector context
-        initial_news = self.news_searcher.search_stock_news(ticker)
-        self._save_news(initial_news, f"STOCK_{ticker}")
-        
-        # Get stock data
-        stock_data = self.stock_data.get_stock_data(ticker)
-        if not stock_data.get("success", False):
-            print(f"Failed to get stock data for {ticker}")
-            return None
-        
-        # Initial analysis combining stock and sector insights
-        initial_stock_analysis = self.ai_analyzer.analyze_news(initial_news)
-        
-        # Create initial summary as formatted string
-        current_summary = f"""
-        Sector Context:
-        - Market Impact: {sector_analysis.get('market_impact', '')}
-        - Sentiment: {sector_analysis.get('sentiment', 'neutral')}
-        - Key Points: {', '.join(sector_analysis.get('key_points', []))}
-        
-        Initial Stock Analysis:
-        - Market Impact: {initial_stock_analysis.get('market_impact', '')}
-        - Sentiment: {initial_stock_analysis.get('sentiment', 'neutral')}
-        - Key Points: {', '.join(initial_stock_analysis.get('key_points', []))}
-        """
-        
-        print("\nStarting multi-round analysis...")
-        # Perform 2 rounds of follow-up questions
-        for round_num in range(2):
-            print(f"\nRound {round_num + 1}:")
-            round_findings = {
-                "questions": [],
-                "answers": []
-            }
-            
-            # Generate follow-up questions based on current context
-            questions = self.ai_analyzer.generate_follow_up_questions(ticker, current_summary)
-            print(f"Generated {len(questions)} follow-up questions")
-            
-            # Search for answers to each question
-            for i, question in enumerate(questions, 1):
-                print(f"\nQuestion {i}: {question.get('text', '')}")
-                
-                # Search news with the specific question
-                question_news = self.news_searcher.search_stock_news(ticker, question.get('text', ''))
-                self._save_news(question_news, f"{ticker}_R{round_num + 1}")
-                
-                # Analyze the news to answer the question
-                answer_analysis = self.ai_analyzer.analyze_news(question_news)
-                print(f"Answer sentiment: {answer_analysis.get('sentiment', 'unknown')}")
-                
-                round_findings["questions"].append(question)
-                round_findings["answers"].append(answer_analysis)
-                
-                # Update current summary with new insights - ensure we're adding strings
-                if answer_analysis and isinstance(answer_analysis, dict):
-                    new_context = f"""
-                    New Analysis:
-                    - Market Impact: {answer_analysis.get('market_impact', '')}
-                    - Sentiment: {answer_analysis.get('sentiment', 'neutral')}
-                    - Key Points: {', '.join(answer_analysis.get('key_points', []))}
-                    """
-                    current_summary += "\n" + new_context
-            
-            all_findings["rounds"].append(round_findings)
-            
-            # Extract key insights from this round
-            for answer in round_findings["answers"]:
-                if isinstance(answer, dict) and "key_points" in answer:
-                    all_findings["key_insights"].extend(answer["key_points"])
-        
-        return all_findings
-    
     def _analyze_stock(self, ticker: str, sector_analysis: Dict) -> Dict:
         """Enhanced stock analysis with deep questioning"""
         try:
             print(f"\nAnalyzing {ticker}...")
             
-            # Get initial stock news and data
-            print(f"Getting initial news for {ticker}...")
-            stock_news = self.news_searcher.search_stock_news(ticker)
-            print(f"Found {len(stock_news)} news articles")
-            self._save_news(stock_news, f"STOCK_{ticker}")
+            # Initialize and use SingleStockMode for detailed analysis
+            single_stock = SingleStockMode()
+            result = single_stock.run(ticker)
             
-            # Get stock data
-            print(f"Getting stock data for {ticker}...")
-            stock_data = self.stock_data.get_stock_data(ticker)
-            if not stock_data.get("success", False):
-                print(f"Failed to get stock data: {stock_data.get('error', 'Unknown error')}")
+            if not result["success"]:
+                print(f"Failed to analyze {ticker}: {result.get('error', 'Unknown error')}")
                 return None
             
-            # Perform deep analysis
-            detailed_analysis = self._deep_stock_analysis(ticker, sector_analysis)
-            print(f"Completed deep analysis with {len(detailed_analysis['rounds'])} rounds")
-            
-            # Select trading personality based on the analysis
-            print("Selecting trading personality...")
-            personality = self.ai_analyzer.select_trading_personality()
-            print(f"Selected personality: {personality}")
-            
-            # Combine all insights for final decision
-            all_insights = []
-            for round_data in detailed_analysis["rounds"]:
-                for answer in round_data["answers"]:
-                    if isinstance(answer, dict):
-                        all_insights.append({
-                            "sentiment": answer.get("sentiment", "neutral"),
-                            "market_impact": answer.get("market_impact", ""),
-                            "confidence": answer.get("confidence", 0)
-                        })
-            
-            # Generate final trading decision
-            print("Generating trading decision...")
-            decision = self.ai_analyzer.generate_trading_decision(
-                ticker=ticker,
-                news_analysis={
-                    "sentiment": sector_analysis.get("sentiment", "neutral"),
-                    "confidence": sector_analysis.get("confidence", 0),
-                    "key_points": detailed_analysis["key_insights"],
-                    "market_impact": "\n".join(i["market_impact"] for i in all_insights)
-                },
-                stock_data=stock_data,
-                personality=personality
-            )
-            
-            # Save trade if action is buy or sell
-            if decision.get("action") in ["buy", "sell"]:
-                print(f"Saving {decision['action']} trade for {ticker}...")
-                self.db.save_trade(
-                    ticker=ticker,
-                    action=decision["action"],
-                    price=decision["entry_price"],
-                    quantity=decision["quantity"],
-                    personality=personality,
-                    confidence=decision["confidence"],
-                    stop_loss=decision["stop_loss"],
-                    take_profit=decision["take_profit"]
-                )
-            
-            return {
-                "ticker": ticker,
-                "decision": decision,
-                "personality": personality,
-                "detailed_analysis": detailed_analysis
+            # Add sector context to the analysis
+            result["sector_context"] = {
+                "sector": sector_analysis.get("sector", "unknown"),
+                "sector_sentiment": sector_analysis.get("sentiment", "neutral"),
+                "sector_confidence": sector_analysis.get("confidence", 0),
+                "sector_key_points": sector_analysis.get("key_points", [])
             }
+            
+            return result
             
         except Exception as e:
             print(f"Error analyzing {ticker}: {str(e)}")

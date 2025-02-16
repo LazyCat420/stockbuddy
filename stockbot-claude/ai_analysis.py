@@ -19,7 +19,7 @@ class AIAnalyzer:
         try:
             from chromadb_handler import ChromaDBHandler
             self.chroma_handler = ChromaDBHandler()
-            print("✅ ChromaDB handler initialized")
+            # print("✅ ChromaDB handler initialized")
         except Exception as e:
             print(f"⚠️ Failed to initialize ChromaDB handler: {str(e)}")
             self.chroma_handler = None
