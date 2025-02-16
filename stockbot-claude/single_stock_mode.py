@@ -27,12 +27,21 @@ class SingleStockMode:
             
             print(f"\n📊 Fetching stock data for {ticker}...")
             stock_data = self.stock_data.get_stock_data(ticker)
+            has_stock_data = stock_data.get("success", False)
             
-            if not stock_data["success"]:
-                print(f"❌ Failed to fetch data for {ticker}")
-                return {
-                    "success": False,
-                    "error": f"Could not fetch data for {ticker}"
+            if not has_stock_data:
+                print(f"⚠️ Could not fetch market data for {ticker}, continuing with news analysis only")
+                stock_data = {
+                    "success": True,
+                    "ticker": ticker,
+                    "current_price": 0,
+                    "daily_change": 0,
+                    "volume": 0,
+                    "technical_indicators": {
+                        "sma_20": 0,
+                        "sma_50": 0,
+                        "rsi": 0
+                    }
                 }
             
             # Step 2: Process analyzed news
@@ -81,6 +90,7 @@ class SingleStockMode:
             return {
                 "success": True,
                 "ticker": ticker,
+                "has_market_data": has_stock_data,
                 "decision": trading_decision,
                 "analysis": detailed_analysis,
                 "summary": summary

@@ -225,6 +225,12 @@ News articles to analyze:
                 "sector_key_points": sector_analysis.get("key_points", [])
             }
             
+            # Log analysis status
+            if result.get("has_market_data", False):
+                print(f"✅ Completed analysis for {ticker} with market data")
+            else:
+                print(f"✅ Completed analysis for {ticker} with news only")
+            
             return result
             
         except Exception as e:
