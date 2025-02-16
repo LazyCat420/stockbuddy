@@ -25,12 +25,38 @@ class SectorMode:
             print(f"{console.info(f'Found {len(sector_news)} news articles for {sector} sector')}")
             self._save_news(sector_news, sector)
             
-            # Step 2: Analyze sector news
-            print(f"\n{console.title('2. Analyzing sector news...')}")
-            sector_analysis = self.ai_analyzer.analyze_news(sector_news)
+            # Step 2: Process each article with LLM summarization
+            print(f"\n{console.title('2. Summarizing news articles...')}")
+            summarized_articles = []
+            for i, article in enumerate(sector_news, 1):
+                print(f"\nProcessing article {i}/{len(sector_news)}...")
+                if article.get("content"):
+                    analysis = self.ai_analyzer.analyze_content({
+                        "success": True,
+                        "content": article["content"],
+                        "metadata": {"source": article.get("source", "unknown")}
+                    })
+                    if analysis["success"]:
+                        summarized_articles.append({
+                            "summary": analysis["summary"],
+                            "sentiment": analysis["sentiment"],
+                            "key_points": analysis["key_points"],
+                            "market_impact": analysis.get("market_impact", "")
+                        })
+                        print(f"✅ Article {i} summarized")
+                        print(f"Sentiment: {analysis['sentiment']}")
+                        print(f"Key points: {len(analysis['key_points'])}")
+                    else:
+                        print(f"⚠️ Failed to analyze article {i}: {analysis.get('error', 'Unknown error')}")
+                else:
+                    print(f"⚠️ Article {i} has no content")
             
-            # Step 3: Extract tickers from news and get additional sector stocks
-            print(f"\n{console.title('3. Identifying relevant stocks...')}")
+            # Step 3: Run chain-of-thought analysis on summaries
+            print(f"\n{console.title('3. Running chain-of-thought analysis...')}")
+            sector_analysis = self.ai_analyzer.analyze_news(summarized_articles)
+            
+            # Step 4: Extract tickers from news and get additional sector stocks
+            print(f"\n{console.title('4. Identifying relevant stocks...')}")
             news_tickers = self._extract_tickers_from_news(sector_news)
             sector_stocks = self.stock_data.get_sector_stocks(sector)
             
@@ -42,8 +68,8 @@ class SectorMode:
             self.db.update_watchlist(all_tickers, sector)
             print(f"{console.success(f'Watchlist updated for {sector}: {all_tickers}')}")
             
-            # Step 4: Analyze each stock with deep analysis
-            print(f"\n{console.title('4. Performing deep analysis on each stock...')}")
+            # Step 5: Analyze each stock with deep analysis
+            print(f"\n{console.title('5. Performing deep analysis on each stock...')}")
             trading_decisions = []
             for ticker in all_tickers:
                 print(f"\n{console.info(f'Analyzing {console.ticker(ticker)}...')}")
@@ -51,8 +77,8 @@ class SectorMode:
                 if decision:
                     trading_decisions.append(decision)
             
-            # Step 5: Generate summary
-            print(f"\n{console.title('5. Generating sector summary...')}")
+            # Step 6: Generate summary
+            print(f"\n{console.title('6. Generating sector summary...')}")
             summary = self._generate_summary(trading_decisions, sector_analysis, sector)
             self.db.save_summary("sector", trading_decisions, summary)
             

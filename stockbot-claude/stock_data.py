@@ -65,11 +65,36 @@ class StockDataHandler:
         """Get stock data for analysis"""
         try:
             print(f"Fetching data for {ticker}...")
+            
+            # Clean and format the ticker
+            ticker = ticker.strip().upper()
+            print(f"Formatted ticker: {ticker}")
+            
+            # Create ticker object
             stock = yf.Ticker(ticker)
+            
+            # Try to get basic info first to validate ticker
+            try:
+                info = stock.info
+                if not info or 'regularMarketPrice' not in info:
+                    print(f"❌ Invalid ticker {ticker} - no market data available")
+                    return self._create_error_response(f"Invalid ticker {ticker} - no market data available")
+            except Exception as e:
+                print(f"❌ Error validating ticker {ticker}: {str(e)}")
+                return self._create_error_response(f"Invalid ticker {ticker} - {str(e)}")
+            
+            print(f"✓ Validated ticker {ticker}")
+            print(f"Company Name: {info.get('longName', 'N/A')}")
+            print(f"Sector: {info.get('sector', 'N/A')}")
+            
+            # Get historical data
             hist = stock.history(period=period)
             
             if hist.empty:
-                return self._create_error_response(f"No data found for {ticker}")
+                print(f"❌ No historical data found for {ticker}")
+                return self._create_error_response(f"No historical data found for {ticker}")
+            
+            print(f"✓ Retrieved {len(hist)} historical data points")
             
             # Calculate technical indicators
             hist['SMA_20'] = hist['Close'].rolling(window=20).mean()
@@ -77,6 +102,7 @@ class StockDataHandler:
             hist['RSI'] = self._calculate_rsi(hist['Close'])
             
             latest_price = hist['Close'].iloc[-1]
+            print(f"Current Price: ${latest_price:.2f}")
             
             data = {
                 "ticker": ticker,
@@ -90,14 +116,19 @@ class StockDataHandler:
                 },
                 "price_history": hist['Close'].tolist(),
                 "volume_history": hist['Volume'].tolist(),
-                "success": True
+                "success": True,
+                "company_info": {
+                    "name": info.get('longName', ''),
+                    "sector": info.get('sector', ''),
+                    "industry": info.get('industry', '')
+                }
             }
             
             # Convert all numeric values to standard Python types
             return self._convert_dict_values(data)
             
         except Exception as e:
-            print(f"Error fetching data for {ticker}: {str(e)}")
+            print(f"❌ Error fetching data for {ticker}: {str(e)}")
             return self._create_error_response(str(e))
     
     def get_market_overview(self) -> Dict:
